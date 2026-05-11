@@ -29,8 +29,70 @@ FS_LABELS = {
 
 THROTTLE_SEC = 0.2
 
+# IFRS XBRL 표준 명명 규칙에서 현금유출을 양수로 저장하는 패턴
+# 특정 회사·계정명이 아닌 IFRS full taxonomy 원칙 기반
+_CF_OUTFLOW_PATTERNS = [
+    "PurchaseOf",         # 자산 취득 (유형자산, 무형자산, 금융자산 등)
+    "Repayments",         # 차입금·사채 상환
+    "DividendsPaid",      # 배당금 지급
+    "InterestPaid",       # 이자 지급
+    "IncomeTaxesPaid",    # 법인세 납부
+    "PaymentsFor",        # 리스부채 상환 등 (IFRS 16)
+    "PaymentsTo",         # 직접법 영업CF (공급자/종업원 지급액)
+    "AcquisitionOf",      # 자기주식 취득 등 dart_ 커스텀 취득 요소
+]
 
-# ── 데이터 로직 (변경 없음) ───────────────────────────────────────────────────
+# 위 패턴에 해당하지만 실제로는 이미 서명된(signed) 행을 보호하는 제외 패턴
+_CF_OUTFLOW_EXCLUDE = [
+    "CashFlowsFromUsedIn",   # 소계행 — DART가 이미 부호 처리
+    "ProceedsFrom",           # 처분·상환 수취액(유입)
+]
+
+
+def _is_cf_outflow(account_id: str) -> bool:
+    """
+    IFRS XBRL 표준에서 현금유출을 양수로 저장하는 요소인지 판정.
+    - ifrs-full_ 및 dart_ 커스텀 요소 모두 포함
+    - 이미 서명된 소계행·유입 요소는 제외
+    """
+    if not account_id or "표준계정코드 미사용" in account_id:
+        return False
+    if any(exc in account_id for exc in _CF_OUTFLOW_EXCLUDE):
+        return False
+    if any(p in account_id for p in _CF_OUTFLOW_PATTERNS):
+        return True
+    # CashFlowsUsedIn 단독 (사업결합 순현금유출 등) — FromUsedIn 소계는 위에서 제외됨
+    if "CashFlowsUsedIn" in account_id:
+        return True
+    return False
+
+
+# 계정명 중복 레이블 매핑: account_id 키워드 → 표시 prefix
+# 삼성 CIS 사례 외에도 IFRS taxonomy 공통 패턴을 등록
+_DUPLICATE_LABEL_RULES: list[tuple[str, str]] = [
+    ("WillNotBeReclassifiedToProfitOrLoss", "[재분류X]"),
+    ("WillBeReclassifiedToProfitOrLoss",    "[재분류O]"),
+    # 향후 추가 가능: ("SomeOtherPattern", "[Label]")
+]
+
+
+def _make_display_nm(account_nm: str, account_id: str, is_dup: bool) -> str:
+    """
+    중복 계정명(is_dup=True)이면 account_id 기반 prefix를 붙여 구분.
+    - 알려진 패턴은 의미 있는 한글 label 사용
+    - 미등록 패턴은 account_id 말미를 fallback으로 사용
+    """
+    if not is_dup:
+        return account_nm
+    for keyword, label in _DUPLICATE_LABEL_RULES:
+        if keyword in account_id:
+            return f"{label} {account_nm}"
+    # fallback: account_id의 마지막 토큰(언더스코어 분리)
+    suffix = account_id.split("_")[-1][:20] if account_id else "?"
+    return f"{account_nm} [{suffix}]"
+
+
+# ── 데이터 로직 ───────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_corp_codes() -> pd.DataFrame:
@@ -116,6 +178,38 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         if col in raw.columns:
             raw[col] = raw[col].apply(parse_amount)
 
+    # Bug #2 수정: CF 세부 라인 부호 복원
+    if "account_id" in raw.columns:
+        cf_mask = raw["sj_div"] == "CF"
+        outflow_mask = raw["account_id"].apply(
+            lambda aid: _is_cf_outflow(str(aid) if aid else "")
+        )
+        for col in ["thstrm_amount", "frmtrm_amount", "bfefrmtrm_amount"]:
+            if col in raw.columns:
+                negate = cf_mask & outflow_mask & raw[col].notna() & (raw[col] > 0)
+                raw.loc[negate, col] = -raw.loc[negate, col]
+
+    # Bug #1 수정: 재무제표·연도 내 중복 account_nm을 자동 감지 후 display_nm 생성
+    if "account_id" in raw.columns:
+        # 중복 여부: 동일 sj_div + year 안에서 account_nm이 2회 이상 등장하는 경우
+        dup_keys = set(
+            raw.groupby(["sj_div", "year", "account_nm"])
+               .size()
+               .loc[lambda s: s > 1]
+               .reset_index()[["sj_div", "account_nm"]]
+               .apply(tuple, axis=1)
+        )
+        raw["display_nm"] = raw.apply(
+            lambda r: _make_display_nm(
+                r.get("account_nm", ""),
+                str(r.get("account_id", "")),
+                is_dup=(r.get("sj_div"), r.get("account_nm")) in dup_keys,
+            ),
+            axis=1,
+        )
+    else:
+        raw["display_nm"] = raw["account_nm"]
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         meta = pd.DataFrame([
@@ -142,11 +236,11 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             if subset.empty:
                 continue
             pivot = (
-                subset.groupby(["account_nm", "year"])["thstrm_amount"]
+                subset.groupby(["display_nm", "year"])["thstrm_amount"]
                 .first().unstack("year").reset_index()
             )
             pivot.columns.name = None
-            pivot = pivot.rename(columns={"account_nm": "계정명"})
+            pivot = pivot.rename(columns={"display_nm": "계정명"})
             year_cols = sorted([c for c in pivot.columns if isinstance(c, int)])
             pivot = pivot[["계정명"] + year_cols]
             pivot.to_excel(writer, sheet_name=fs_name[:31], index=False)
