@@ -68,11 +68,16 @@ def _is_cf_outflow(account_id: str) -> bool:
 
 
 # 계정명 중복 레이블 매핑: account_id 키워드 → 표시 prefix
-# 삼성 CIS 사례 외에도 IFRS taxonomy 공통 패턴을 등록
+# 순서 중요: 먼저 매칭된 규칙이 적용됨
 _DUPLICATE_LABEL_RULES: list[tuple[str, str]] = [
+    # CIS 재분류 구분
     ("WillNotBeReclassifiedToProfitOrLoss", "[재분류X]"),
     ("WillBeReclassifiedToProfitOrLoss",    "[재분류O]"),
-    # 향후 추가 가능: ("SomeOtherPattern", "[Label]")
+    # 유동/비유동 구분 (BS에서 가장 흔한 중복 원인)
+    ("Shortterm",    "[단기]"),
+    ("Current",      "[유동]"),
+    ("Longterm",     "[장기]"),
+    ("Noncurrent",   "[비유동]"),
 ]
 
 
@@ -87,8 +92,10 @@ def _make_display_nm(account_nm: str, account_id: str, is_dup: bool) -> str:
     for keyword, label in _DUPLICATE_LABEL_RULES:
         if keyword in account_id:
             return f"{label} {account_nm}"
-    # fallback: account_id의 마지막 토큰(언더스코어 분리)
-    suffix = account_id.split("_")[-1][:20] if account_id else "?"
+    # fallback: 표준코드 미사용이면 그냥 계정명 그대로, 아니면 account_id 말미
+    if not account_id or "표준계정코드 미사용" in account_id:
+        return account_nm
+    suffix = account_id.split("_")[-1][:20]
     return f"{account_nm} [{suffix}]"
 
 
