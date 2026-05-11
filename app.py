@@ -92,9 +92,10 @@ def _make_display_nm(account_nm: str, account_id: str, is_dup: bool) -> str:
     for keyword, label in _DUPLICATE_LABEL_RULES:
         if keyword in account_id:
             return f"{label} {account_nm}"
-    # fallback: 표준코드 미사용이면 그냥 계정명 그대로, 아니면 account_id 말미
+    # 비표준 커스텀 항목은 (기타) 표기
     if not account_id or "표준계정코드 미사용" in account_id:
-        return account_nm
+        return f"{account_nm} (기타)"
+    # 그 외 미등록 패턴은 account_id 말미로 구분
     suffix = account_id.split("_")[-1][:20]
     return f"{account_nm} [{suffix}]"
 
@@ -239,11 +240,18 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         }).to_excel(writer, sheet_name="원본데이터", index=False)
 
         for fs_code, fs_name in FS_LABELS.items():
-            subset = raw[raw["sj_div"] == fs_code]
+            subset = raw[raw["sj_div"] == fs_code].copy()
             if subset.empty:
                 continue
+
+            # 원본 순서 보존: ord 컬럼 기준 정렬 (없으면 입력 순서 그대로)
+            if "ord" in subset.columns:
+                subset["ord"] = pd.to_numeric(subset["ord"], errors="coerce")
+                subset = subset.sort_values(["year", "ord"], na_position="last")
+
+            # sort=False 로 groupby가 알파벳 재정렬하지 않도록
             pivot = (
-                subset.groupby(["display_nm", "year"])["thstrm_amount"]
+                subset.groupby(["display_nm", "year"], sort=False)["thstrm_amount"]
                 .first().unstack("year").reset_index()
             )
             pivot.columns.name = None
