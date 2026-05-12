@@ -188,8 +188,9 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
         el = account_id.rsplit("_", 1)[-1]
         if el in _HL3_ELS:
             return 3
-        if el in {"CurrentAssets", "NoncurrentAssets",
-                   "Liabilities", "Equity"}:   # 유동/비유동자산, 부채총계, 자본총계
+        if el in {"Liabilities", "Equity"}:      # 부채총계, 자본총계 → 노란색
+            return 1
+        if el in {"CurrentAssets", "NoncurrentAssets"}:  # 유동/비유동자산 → 볼드
             return 2
         return 0
 
