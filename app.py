@@ -105,26 +105,33 @@ def _make_display_nm(account_nm: str, account_id: str, is_dup: bool) -> str:
 # ── Excel 스타일 상수 (디자인 사양 고정) ─────────────────────────────────────
 
 # 배경색
-_F_BLACK  = PatternFill("solid", fgColor="000000")  # 제목 배경
-_F_NAVY   = PatternFill("solid", fgColor="1F4E78")  # 1차 헤더
-_F_LBLUE  = PatternFill("solid", fgColor="D9E1F2")  # 2차 헤더 (결산일)
-_F_YELLOW = PatternFill("solid", fgColor="FFF2CC")  # 대분류 헤더
-_F_GREEN  = PatternFill("solid", fgColor="E2EFDA")  # 합계/총계
-_F_WHITE  = PatternFill("solid", fgColor="FFFFFF")  # 기본 배경
+_F_BLACK    = PatternFill("solid", fgColor="000000")  # 제목 배경
+_F_NAVY     = PatternFill("solid", fgColor="1F4E78")  # 1차 헤더
+_F_LBLUE    = PatternFill("solid", fgColor="D9E1F2")  # 2차 헤더 (결산일)
+_F_YELLOW   = PatternFill("solid", fgColor="FFF2CC")  # 대분류 헤더
+_F_GREEN    = PatternFill("solid", fgColor="E2EFDA")  # 합계/총계 (연한 초록)
+_F_DK_GREEN = PatternFill("solid", fgColor="C6E0B4")  # 최종 결과 강조 (진한 초록)
+_F_WHITE    = PatternFill("solid", fgColor="FFFFFF")  # 기본 배경
 
 # 테두리
 _S_THIN   = Side(style="thin",   color="000000")
+_S_THICK  = Side(style="thick",  color="000000")
 _S_NONE   = Side(style=None)
 _S_DOUBLE = Side(style="double", color="000000")
 
 # 글꼴
-_FT_TITLE = Font(name="맑은 고딕", bold=True,   color="FFFFFF", size=14)
-_FT_H1    = Font(name="맑은 고딕", bold=True,   color="FFFFFF", size=11)
-_FT_H2    = Font(name="맑은 고딕", bold=True,   color="000000", size=11)
-_FT_BOLD  = Font(name="맑은 고딕", bold=True,   color="000000", size=11)
-_FT_NORM  = Font(name="맑은 고딕",               color="000000", size=11)
-_FT_UNIT  = Font(name="맑은 고딕", italic=True,  color="000000", size=9)
-_FT_GREY  = Font(name="맑은 고딕",               color="BFBFBF", size=11)  # 빈값
+_FT_TITLE    = Font(name="맑은 고딕", bold=True,   color="FFFFFF", size=14)
+_FT_H1       = Font(name="맑은 고딕", bold=True,   color="FFFFFF", size=11)
+_FT_H2       = Font(name="맑은 고딕", bold=True,   color="000000", size=11)
+_FT_BOLD     = Font(name="맑은 고딕", bold=True,   color="000000", size=11)
+_FT_NORM     = Font(name="맑은 고딕",               color="000000", size=11)
+_FT_ITALIC   = Font(name="맑은 고딕", italic=True,  color="000000", size=11)
+_FT_UNIT     = Font(name="맑은 고딕", italic=True,  color="000000", size=9)
+_FT_GREY     = Font(name="맑은 고딕",               color="BFBFBF", size=11)  # 빈값
+_FT_GREY_NRM = Font(name="맑은 고딕",               color="7F7F7F", size=11)  # 보조 텍스트
+_FT_GREY_BLD = Font(name="맑은 고딕", bold=True,    color="7F7F7F", size=11)  # 카테고리 라벨
+_FT_GREY_ITA = Font(name="맑은 고딕", italic=True,  color="7F7F7F", size=11)  # % 보조지표
+_FT_BLUE     = Font(name="맑은 고딕",               color="0000FF", size=11)  # 수동입력 강조
 
 # 정렬
 _AL_C  = Alignment(horizontal="center", vertical="center")
@@ -369,6 +376,355 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
     ws.freeze_panes = f"{get_column_letter(CB + 1)}8"
 
 
+# ── Cash Flow Overview 분석 시트 ──────────────────────────────────────────────
+
+def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
+                 year_cols: list) -> dict:
+    """raw에서 특정 XBRL 패턴의 계정을 연도별로 추출."""
+    sub = raw[raw["sj_div"] == sj_div]
+    result = {yr: None for yr in year_cols}
+    for yr in year_cols:
+        yr_rows = sub[sub["year"] == yr]
+        for pat in patterns:
+            m = yr_rows[yr_rows["account_id"].str.contains(pat, na=False, regex=False)]
+            if not m.empty:
+                v = m.iloc[0]["thstrm_amount"]
+                if v is not None and not pd.isna(v):
+                    result[yr] = v
+                    break
+    return result
+
+
+def _cfo_add(a: dict, b: dict, year_cols: list) -> dict:
+    """두 연도별 dict를 합산 (None 처리 포함)."""
+    out = {}
+    for yr in year_cols:
+        va, vb = a.get(yr), b.get(yr)
+        if va is None and vb is None:
+            out[yr] = None
+        else:
+            out[yr] = (va or 0) + (vb or 0)
+    return out
+
+
+def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
+                     year_cols: list, period_map: dict) -> None:
+    """Cash Flow Overview 분석 시트 작성."""
+
+    PCT_FMT = "0.0%;(0.0%);-"
+    CB  = 2   # B열 (label)
+    NC  = len(year_cols)
+    LAST = CB + NC  # 마지막 데이터 열
+
+    def col(j):  # j=0 → C열, j=1 → D열 ...
+        return get_column_letter(CB + 1 + j)
+
+    def _w(row, c, val=None, fill=_F_WHITE, font=_FT_NORM,
+           align=_AL_L, fmt=None, border=None):
+        cell = ws.cell(row=row, column=c, value=val)
+        cell.fill, cell.font, cell.alignment = fill, font, align
+        if fmt:   cell.number_format = fmt
+        if border: cell.border = border
+        return cell
+
+    def _row(r, label, fill=_F_WHITE, font=_FT_NORM,
+             vals=None, val_font=None, val_fill=None, fmt=_NUM_FMT,
+             border_top=None, border_bot=None):
+        """행 전체 작성 헬퍼."""
+        _w(r, CB, label, fill, font, _AL_L)
+        vf = val_font or font
+        vfl = val_fill or fill
+        top_bdr = Border(top=border_top) if border_top else None
+        bot_bdr = Border(bottom=border_bot) if border_bot else None
+        for j in range(NC):
+            v = vals[j] if vals else None
+            bdr = None
+            if border_top and border_bot:
+                bdr = Border(top=border_top, bottom=border_bot)
+            elif border_top:
+                bdr = Border(top=border_top)
+            elif border_bot:
+                bdr = Border(bottom=border_bot)
+            c = CB + 1 + j
+            if v is None:
+                _w(r, c, None, vfl, _FT_GREY, _AL_R, fmt, bdr)
+            else:
+                _w(r, c, v, vfl, vf, _AL_R, fmt, bdr)
+        # label 셀 테두리
+        if border_top or border_bot:
+            lbdr = Border(
+                top=border_top if border_top else _S_NONE,
+                bottom=border_bot if border_bot else _S_NONE,
+            )
+            ws.cell(row=r, column=CB).border = lbdr
+        ws.row_dimensions[r].height = 17
+
+    def _formula_row(r, label, formula_tpl, fill=_F_WHITE, font=_FT_NORM,
+                     fmt=_NUM_FMT, border_top=None, border_bot=None):
+        """수식 행 작성 — formula_tpl에서 {c} 를 열 문자로 치환."""
+        _w(r, CB, label, fill, font, _AL_L)
+        for j in range(NC):
+            c_ltr = col(j)
+            formula = formula_tpl.format(c=c_ltr)
+            bdr = None
+            if border_top and border_bot:
+                bdr = Border(top=border_top, bottom=border_bot)
+            elif border_top:
+                bdr = Border(top=border_top)
+            elif border_bot:
+                bdr = Border(bottom=border_bot)
+            _w(r, CB + 1 + j, formula, fill, font, _AL_R, fmt, bdr)
+        if border_top or border_bot:
+            lbdr = Border(
+                top=border_top if border_top else _S_NONE,
+                bottom=border_bot if border_bot else _S_NONE,
+            )
+            ws.cell(row=r, column=CB).border = lbdr
+        ws.row_dimensions[r].height = 17
+
+    def _blank(r):
+        for c in range(CB, LAST + 1):
+            _w(r, c, None, _F_WHITE, _FT_NORM)
+        ws.row_dimensions[r].height = 8
+
+    # ── 데이터 추출 ──────────────────────────────────────────────────────────
+    rev    = _cfo_extract(raw, "IS", ["Revenue", "RevenueFromContracts"], year_cols)
+    ebit   = _cfo_extract(raw, "IS",
+                          ["ProfitLossFromOperatingActivities", "OperatingIncomeLoss"],
+                          year_cols)
+    cogs   = _cfo_extract(raw, "IS", ["CostOfSales", "CostOfGoodsSold"], year_cols)
+    ar     = _cfo_extract(raw, "BS",
+                          ["TradeAndOtherCurrentReceivables", "TradeReceivables",
+                           "TradeAndOtherReceivables"], year_cols)
+    inv    = _cfo_extract(raw, "BS", ["Inventories"], year_cols)
+    ap     = _cfo_extract(raw, "BS",
+                          ["TradeAndOtherCurrentPayables", "TradeAndOtherPayables"],
+                          year_cols)
+    ppe    = _cfo_extract(raw, "CF",
+                          ["PurchaseOfPropertyPlantAndEquipment"], year_cols)
+    intan  = _cfo_extract(raw, "CF",
+                          ["PurchaseOfIntangibleAssets"], year_cols)
+    capex  = _cfo_add(ppe, intan, year_cols)
+
+    # NWC 증감: 전기 대비 변화 (현금흐름 부호 기준)
+    def nwc_chg(bal: dict, sign: int) -> dict:
+        """sign=+1 → 증가가 현금유출(매출채권·재고), sign=-1 → 증가가 현금유입(매입채무)."""
+        result = {}
+        for i, yr in enumerate(year_cols):
+            if i == 0:
+                result[yr] = None
+            else:
+                prev = year_cols[i - 1]
+                cur_v, prv_v = bal.get(yr), bal.get(prev)
+                if cur_v is None or prv_v is None:
+                    result[yr] = None
+                else:
+                    result[yr] = -sign * (cur_v - prv_v)
+        return result
+
+    ar_chg  = nwc_chg(ar,  1)
+    inv_chg = nwc_chg(inv, 1)
+    ap_chg  = nwc_chg(ap, -1)
+
+    def yr_vals(d: dict) -> list:
+        return [d.get(yr) for yr in year_cols]
+
+    # ── 행 번호 정의 ─────────────────────────────────────────────────────────
+    R = {
+        "title": 2, "unit": 3, "blank1": 4,
+        "hdr1": 5, "hdr2": 6, "blank2": 7,
+        "rev": 8, "growth": 9,
+        "ebit": 10, "da": 11, "ebitda": 12, "ebitda_pct": 13,
+        "blank3": 14,
+        "nwc_hdr": 15,
+        "ar_chg": 16, "inv_chg": 17, "ap_chg": 18, "nwc_tot": 19,
+        "blank4": 20,
+        "ebitda_nwc": 21, "conv_pct": 22,
+        "blank5": 23,
+        "capex_hdr": 24,
+        "capex_tot": 25, "capex_maint": 26, "capex_exp": 27,
+        "capex_pct": 28,
+        "blank6": 29,
+        "fcf": 30, "cash_conv": 31,
+        "blank7": 32,
+        "ccc_hdr": 33,
+        "nwc_bal_cat": 34,
+        "ar_bal": 35, "inv_bal": 36, "ap_bal": 37,
+        "blank8": 38,
+        "ccc_cat": 39,
+        "dso": 40, "dio": 41, "dpo": 42,
+        "blank9": 43,
+        "ccc": 44,
+    }
+
+    # ── 타이틀 ───────────────────────────────────────────────────────────────
+    title_cell = ws.cell(row=R["title"], column=CB,
+                         value=f"{corp_name} - Cash Flow Overview")
+    title_cell.fill, title_cell.font, title_cell.alignment = (
+        _F_BLACK, _FT_TITLE, _AL_L)
+    for c in range(CB + 1, LAST + 1):
+        _w(R["title"], c, fill=_F_BLACK, font=_FT_H1)
+    ws.row_dimensions[R["title"]].height = 22
+
+    _w(R["unit"], CB, "(단위: 원)", _F_WHITE, _FT_UNIT, _AL_L)
+    ws.row_dimensions[R["unit"]].height = 14
+    _blank(R["blank1"])
+
+    # ── 헤더 행 ──────────────────────────────────────────────────────────────
+    _w(R["hdr1"], CB, "과 목", _F_NAVY, _FT_H1, _AL_C)
+    for j, yr in enumerate(year_cols):
+        _w(R["hdr1"], CB + 1 + j, f"FY{str(yr)[-2:]}", _F_NAVY, _FT_H1, _AL_C)
+    ws.row_dimensions[R["hdr1"]].height = 18
+
+    _w(R["hdr2"], CB, "기간", _F_LBLUE, _FT_H2, _AL_C)
+    for j, yr in enumerate(year_cols):
+        period = period_map.get(yr, "")
+        _w(R["hdr2"], CB + 1 + j, period, _F_LBLUE, _FT_H2, _AL_C)
+    ws.row_dimensions[R["hdr2"]].height = 18
+    _blank(R["blank2"])
+
+    # ── Revenue ──────────────────────────────────────────────────────────────
+    _row(R["rev"], "Revenue", font=_FT_BOLD, vals=yr_vals(rev))
+    # Growth % — 첫 열은 이전 연도 없으므로 공백, 이후 열은 수식
+    _w(R["growth"], CB, "  Growth %", _F_WHITE, _FT_GREY_ITA, _AL_L)
+    _w(R["growth"], CB + 1, None, _F_WHITE, _FT_GREY_ITA, _AL_R, PCT_FMT)
+    for j in range(1, NC):
+        c_ltr = col(j)
+        prev_c = col(j - 1)
+        formula = f"=IF({prev_c}{R['rev']}<>0,{c_ltr}{R['rev']}/{prev_c}{R['rev']}-1,\"\")"
+        _w(R["growth"], CB + 1 + j, formula, _F_WHITE, _FT_GREY_ITA, _AL_R, PCT_FMT)
+    ws.row_dimensions[R["growth"]].height = 17
+
+    # ── EBIT / D&A / EBITDA ──────────────────────────────────────────────────
+    _row(R["ebit"], "Operating Profit (EBIT)", font=_FT_BOLD,
+         vals=yr_vals(ebit), border_bot=_S_THIN)
+    # D&A — 수동 입력 (파란색 빈 셀)
+    _w(R["da"], CB, "  (+) D&A", _F_WHITE, _FT_ITALIC, _AL_L)
+    for j in range(NC):
+        _w(R["da"], CB + 1 + j, None, _F_WHITE, _FT_BLUE, _AL_R, _NUM_FMT)
+    ws.row_dimensions[R["da"]].height = 17
+
+    _formula_row(R["ebitda"], "EBITDA",
+                 f"=IF({{c}}{R['ebit']}=\"\",\"\",{{c}}{R['ebit']}+IF({{c}}{R['da']}=\"\",0,{{c}}{R['da']}))",
+                 font=_FT_BOLD, border_top=_S_THIN)
+    _formula_row(R["ebitda_pct"], "  EBITDA %",
+                 f"=IF({{c}}{R['rev']}<>0,{{c}}{R['ebitda']}/{{c}}{R['rev']},\"\")",
+                 font=_FT_GREY_ITA, fmt=PCT_FMT)
+    _blank(R["blank3"])
+
+    # ── NWC Movement ─────────────────────────────────────────────────────────
+    _w(R["nwc_hdr"], CB, "NWC Movement", _F_YELLOW, _FT_BOLD, _AL_L)
+    for c in range(CB + 1, LAST + 1):
+        _w(R["nwc_hdr"], c, fill=_F_YELLOW)
+    ws.row_dimensions[R["nwc_hdr"]].height = 17
+
+    _row(R["ar_chg"],  "  매출채권 증감 (증가시 -)", font=_FT_NORM, vals=yr_vals(ar_chg))
+    _row(R["inv_chg"], "  재고자산 증감 (증가시 -)", font=_FT_NORM, vals=yr_vals(inv_chg))
+    _row(R["ap_chg"],  "  매입채무 증감 (증가시 +)", font=_FT_NORM,
+         vals=yr_vals(ap_chg), border_bot=_S_THIN)
+    _formula_row(R["nwc_tot"], "Total NWC Movement",
+                 f"=IF(AND({{c}}{R['ar_chg']}=\"\",{{c}}{R['inv_chg']}=\"\",{{c}}{R['ap_chg']}=\"\"),\"\","
+                 f"IF({{c}}{R['ar_chg']}=\"\",0,{{c}}{R['ar_chg']})"
+                 f"+IF({{c}}{R['inv_chg']}=\"\",0,{{c}}{R['inv_chg']})"
+                 f"+IF({{c}}{R['ap_chg']}=\"\",0,{{c}}{R['ap_chg']}))",
+                 font=_FT_BOLD, border_top=_S_THIN)
+    _blank(R["blank4"])
+
+    # ── EBITDA after NWC ─────────────────────────────────────────────────────
+    _formula_row(R["ebitda_nwc"], "EBITDA after NWC Movement",
+                 f"=IF({{c}}{R['ebitda']}=\"\",\"\",{{c}}{R['ebitda']}+IF({{c}}{R['nwc_tot']}=\"\",0,{{c}}{R['nwc_tot']}))",
+                 fill=_F_GREEN, font=_FT_BOLD,
+                 border_top=_S_THIN, border_bot=_S_THIN)
+    _formula_row(R["conv_pct"], "  Conversion % (post NWC / EBITDA)",
+                 f"=IF({{c}}{R['ebitda']}<>0,{{c}}{R['ebitda_nwc']}/{{c}}{R['ebitda']},\"\")",
+                 font=_FT_GREY_ITA, fmt=PCT_FMT)
+    _blank(R["blank5"])
+
+    # ── CAPEX ────────────────────────────────────────────────────────────────
+    _w(R["capex_hdr"], CB, "CAPEX", _F_YELLOW, _FT_BOLD, _AL_L)
+    for c in range(CB + 1, LAST + 1):
+        _w(R["capex_hdr"], c, fill=_F_YELLOW)
+    ws.row_dimensions[R["capex_hdr"]].height = 17
+
+    _row(R["capex_tot"], "  Total CAPEX", font=_FT_BOLD, vals=yr_vals(capex))
+    # Maintenance / Expansion — 수동 입력 (파란색)
+    _w(R["capex_maint"], CB, "    ㄴ Maintenance CAPEX", _F_WHITE, _FT_GREY_NRM, _AL_L)
+    _w(R["capex_exp"],   CB, "    ㄴ Expansion CAPEX",   _F_WHITE, _FT_GREY_NRM, _AL_L)
+    for j in range(NC):
+        _w(R["capex_maint"], CB + 1 + j, None, _F_WHITE, _FT_BLUE, _AL_R, _NUM_FMT)
+        _w(R["capex_exp"],   CB + 1 + j, None, _F_WHITE, _FT_BLUE, _AL_R, _NUM_FMT)
+    ws.row_dimensions[R["capex_maint"]].height = 17
+    ws.row_dimensions[R["capex_exp"]].height   = 17
+
+    _formula_row(R["capex_pct"], "  CAPEX % of Revenue",
+                 f"=IF({{c}}{R['rev']}<>0,IF({{c}}{R['capex_tot']}=\"\",\"\",{{c}}{R['capex_tot']}/{{c}}{R['rev']}),\"\")",
+                 font=_FT_GREY_ITA, fmt=PCT_FMT, border_bot=_S_THIN)
+    _blank(R["blank6"])
+
+    # ── Free Cash Flow ────────────────────────────────────────────────────────
+    _formula_row(R["fcf"], "Free Cash Flow",
+                 f"=IF({{c}}{R['ebitda_nwc']}=\"\",\"\",{{c}}{R['ebitda_nwc']}-IF({{c}}{R['capex_tot']}=\"\",0,{{c}}{R['capex_tot']}))",
+                 fill=_F_DK_GREEN, font=_FT_BOLD,
+                 border_top=_S_THICK, border_bot=_S_DOUBLE)
+    _formula_row(R["cash_conv"], "  Cash Conversion % (FCF / EBITDA)",
+                 f"=IF({{c}}{R['ebitda']}<>0,{{c}}{R['fcf']}/{{c}}{R['ebitda']},\"\")",
+                 font=_FT_GREY_ITA, fmt=PCT_FMT)
+    _blank(R["blank7"])
+
+    # ── NWC Balance & CCC ────────────────────────────────────────────────────
+    _w(R["ccc_hdr"], CB, "NWC Balance & Cash Conversion Cycle (CCC)",
+       _F_YELLOW, _FT_BOLD, _AL_L)
+    for c in range(CB + 1, LAST + 1):
+        _w(R["ccc_hdr"], c, fill=_F_YELLOW)
+    ws.row_dimensions[R["ccc_hdr"]].height = 17
+
+    _w(R["nwc_bal_cat"], CB, "[NWC Balance]", _F_WHITE, _FT_GREY_BLD, _AL_L)
+    ws.row_dimensions[R["nwc_bal_cat"]].height = 17
+
+    _row(R["ar_bal"],  "  매출채권", font=_FT_NORM, vals=yr_vals(ar))
+    _row(R["inv_bal"], "  재고자산", font=_FT_NORM, vals=yr_vals(inv))
+    _row(R["ap_bal"],  "  매입채무", font=_FT_NORM, vals=yr_vals(ap))
+    _blank(R["blank8"])
+
+    _w(R["ccc_cat"], CB, "[Cash Conversion Cycle (days)]", _F_WHITE, _FT_GREY_BLD, _AL_L)
+    ws.row_dimensions[R["ccc_cat"]].height = 17
+
+    # DSO / DIO / DPO 수식 (COGS 있으면 사용, 없으면 Revenue fallback)
+    cogs_vals = yr_vals(cogs)
+    has_cogs  = any(v is not None for v in cogs_vals)
+    denom_row = R["rev"]   # fallback
+
+    if has_cogs:
+        # cogs를 별도 숨김 행에 기록 (수식 참조용) — 마지막 행 아래 숨김
+        cogs_row = R["ccc"] + 2
+        _row(cogs_row, "_cogs_helper", font=_FT_GREY, vals=cogs_vals)
+        ws.row_dimensions[cogs_row].height = 0  # 숨김
+        denom_row = cogs_row
+
+    _formula_row(R["dso"], "  DSO (매출채권 회수일수)",
+                 f"=IF({{c}}{R['rev']}<>0,{{c}}{R['ar_bal']}/{{c}}{R['rev']}*365,\"\")",
+                 font=_FT_NORM, fmt="0.0")
+    _formula_row(R["dio"], "  DIO (재고 회전일수)",
+                 f"=IF({{c}}{denom_row}<>0,{{c}}{R['inv_bal']}/{{c}}{denom_row}*365,\"\")",
+                 font=_FT_NORM, fmt="0.0")
+    _formula_row(R["dpo"], "  DPO (매입채무 지급일수)",
+                 f"=IF({{c}}{denom_row}<>0,{{c}}{R['ap_bal']}/{{c}}{denom_row}*365,\"\")",
+                 font=_FT_NORM, fmt="0.0", border_bot=_S_THIN)
+    _blank(R["blank9"])
+    _formula_row(R["ccc"], "CCC (DSO + DIO - DPO)",
+                 f"=IF({{c}}{R['dso']}=\"\",\"\",{{c}}{R['dso']}+{{c}}{R['dio']}-{{c}}{R['dpo']})",
+                 fill=_F_GREEN, font=_FT_BOLD, fmt="0.0",
+                 border_top=_S_THIN, border_bot=_S_DOUBLE)
+
+    # ── 열 너비 / 틀 고정 ─────────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 2
+    ws.column_dimensions[get_column_letter(CB)].width = 44
+    for j in range(NC):
+        ws.column_dimensions[get_column_letter(CB + 1 + j)].width = 17
+    ws.freeze_panes = f"{get_column_letter(CB + 1)}{R['hdr1']}"
+    ws.sheet_view.showGridLines = False
+
+
 # ── 데이터 로직 ───────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -608,6 +964,11 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             ws = writer.book[sheet_name]
             _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
                             year_cols, period_map, fs_code)
+
+        # ── Cash Flow Overview 분석 시트 ──────────────────────────────────
+        all_year_cols = sorted(raw["year"].unique().tolist())
+        ws_cfo = writer.book.create_sheet("Cash Flow Overview")
+        _write_cfo_sheet(ws_cfo, raw, corp_name, all_year_cols, period_map)
 
     return output.getvalue()
 
