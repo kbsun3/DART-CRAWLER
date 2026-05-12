@@ -254,7 +254,7 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
         display_nm = row_s["계정명"]
         account_id = id_map.get(display_nm, "")
         vals       = [row_s.get(yr) for yr in year_cols]
-        has_vals   = any(v is not None for v in vals)
+        has_vals   = any(v is not None and not pd.isna(v) for v in vals)
         level      = _hl_level(account_id, has_vals)
         row_levels.append((er, level))
 
@@ -272,8 +272,9 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
 
         for j, yr in enumerate(year_cols):
             val  = row_s.get(yr)
-            fnt  = _FT_GREY if val is None else font
-            cell = _w(er, CB + 1 + j, 0 if val is None else val,
+            empty = val is None or pd.isna(val)
+            fnt  = _FT_GREY if empty else font
+            cell = _w(er, CB + 1 + j, None if empty else val,
                       fill, fnt, _AL_R, _NUM_FMT)
 
         ws.row_dimensions[er].height = 17
@@ -394,6 +395,25 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             if col in raw.columns:
                 negate = cf_mask & outflow_mask & raw[col].notna() & (raw[col] > 0)
                 raw.loc[negate, col] = -raw.loc[negate, col]
+
+    # Fix #3: 연도별 계정명 변경(리네임) 정규화
+    # 동일 account_id가 연도마다 다른 account_nm을 가질 때 가장 최근 연도 기준으로 통일.
+    # 예: '영업활동현금흐름표'(FY21) vs '영업활동현금흐름'(FY24) → 동일 IFRS 요소
+    # 비표준 계정('-표준계정코드 미사용-')은 account_id가 없으므로 account_nm 유지.
+    if "account_id" in raw.columns:
+        non_std_mask = raw["account_id"].str.contains("표준계정코드 미사용", na=False)
+        std_rows = raw[~non_std_mask]
+        if not std_rows.empty:
+            # account_id 별 최신 연도의 account_nm을 정규 명칭으로 채택
+            canonical = (
+                std_rows.sort_values("year", ascending=False)
+                .groupby("account_id")["account_nm"]
+                .first()
+                .to_dict()
+            )
+            raw.loc[~non_std_mask, "account_nm"] = raw.loc[~non_std_mask, "account_id"].map(
+                lambda aid: canonical.get(aid, "")
+            )
 
     # Bug #1 수정: 재무제표·연도 내 중복 account_nm을 자동 감지 후 display_nm 생성
     if "account_id" in raw.columns:
