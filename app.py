@@ -201,13 +201,27 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
             return 1  # 영업이익·당기순이익 → 노란색
         return 0
 
-    # ── CIS / CF / SCE ───────────────────────────────────────────────────────
+    # ── CIS ──────────────────────────────────────────────────────────────────
+    if sj_div == "CIS":
+        if not has_values:
+            return 1  # 구조 헤더
+        if not account_id or "표준계정코드 미사용" in account_id:
+            return 0
+        el = account_id.rsplit("_", 1)[-1]
+        if el == "ComprehensiveIncome":
+            return 3  # 총포괄이익 → 초록
+        if el == "ProfitLoss":
+            return 1  # 당기순이익 → 노란색 (IS와 통일)
+        if el == "OtherComprehensiveIncome":
+            return 2  # 기타포괄손익 → 볼드
+        return 0
+
+    # ── CF / SCE ─────────────────────────────────────────────────────────────
     if not has_values:
         return 1  # 값 없는 행 = 대분류 헤더
     if not account_id or "표준계정코드 미사용" in account_id:
         return 0
     el = account_id.rsplit("_", 1)[-1]
-    # CF 맥락에서 IS/CIS 총계 요소는 세부항목으로 강등
     if sj_div == "CF" and el in _CF_NOT_TOTAL:
         return 0
     if el in _HL3_ELS:
