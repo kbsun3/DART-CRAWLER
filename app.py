@@ -140,12 +140,15 @@ _NUM_FMT = '#,##0;(#,##0);-'
 # account_id의 마지막 _ 이후 element name으로 판정 (한글 계정명 의존 X)
 
 _HL3_ELS = {    # Level 3: 합계/총계 → 초록 배경 + 굵게
+    # BS
     "Assets", "EquityAndLiabilities", "LiabilitiesAndEquity",
+    # IS / CIS (당기순이익, 포괄이익은 해당 재무제표에서만 최상위 합계)
     "ProfitLoss",
     "ComprehensiveIncome",
+    # CF
     "CashAndCashEquivalentsAtEndOfPeriodCf",
 }
-_HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게
+_HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게, indent 1
     # BS
     "CurrentAssets", "NoncurrentAssets",
     "CurrentLiabilities", "NoncurrentLiabilities",
@@ -166,19 +169,30 @@ _HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게
     "CashAndCashEquivalentsAtBeginningOfPeriodCf",
 }
 
+# CF에서는 ProfitLoss·ComprehensiveIncome이 간접법 출발 세부항목
+# (IS/CIS에서는 최상위 합계지만 CF에서는 Level 0이어야 함)
+_CF_NOT_TOTAL = {"ProfitLoss", "ComprehensiveIncome"}
 
-def _hl_level(account_id: str, has_values: bool) -> int:
+
+def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
     """
     0 = 세부항목  (흰색, 보통, indent 3)
     1 = 대분류    (노랑, 굵게, 값 없음)
     2 = 중분류/소계 (흰색, 굵게, indent 1)
-    3 = 합계/총계  (초록, 굵게)
+    3 = 합계/총계  (초록, 굵게, indent 0)
+
+    sj_div: 재무제표 구분 코드 (BS/IS/CIS/CF/SCE).
+    같은 element name이라도 CF에서는 세부항목으로 처리해야 하는
+    경우가 있어 sj_div를 함께 받아 판정.
     """
     if not has_values:
         return 1  # 값 없는 행 = 대분류 헤더
     if not account_id or "표준계정코드 미사용" in account_id:
         return 0
     el = account_id.rsplit("_", 1)[-1]
+    # CF 맥락에서 IS/CIS 총계 요소는 세부항목으로 강등
+    if sj_div == "CF" and el in _CF_NOT_TOTAL:
+        return 0
     if el in _HL3_ELS:
         return 3
     if el in _HL2_ELS:
@@ -188,7 +202,8 @@ def _hl_level(account_id: str, has_values: bool) -> int:
 
 def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
                     corp_name: str, fs_name: str,
-                    years: list[int], period_map: dict) -> None:
+                    years: list[int], period_map: dict,
+                    fs_code: str = "") -> None:
     """재무제표 시트 작성 — 디자인 사양 준수."""
     year_cols = [c for c in pivot.columns if isinstance(c, int)]
     n_yr = len(year_cols)
@@ -255,12 +270,16 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
         account_id = id_map.get(display_nm, "")
         vals       = [row_s.get(yr) for yr in year_cols]
         has_vals   = any(v is not None and not pd.isna(v) for v in vals)
-        level      = _hl_level(account_id, has_vals)
+        level      = _hl_level(account_id, has_vals, fs_code)
         row_levels.append((er, level))
 
         # 행 스타일
+        # Level 3(총계): indent 0 — 가장 돌출되게
+        # Level 2(소계): indent 1
+        # Level 1(헤더): indent 0
+        # Level 0(세부): indent 3
         if level == 3:
-            fill, font, nm_align = _F_GREEN,  _FT_BOLD, _AL_L1
+            fill, font, nm_align = _F_GREEN,  _FT_BOLD, _AL_L
         elif level == 2:
             fill, font, nm_align = _F_WHITE,  _FT_BOLD, _AL_L1
         elif level == 1:
@@ -520,7 +539,7 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             writer.book.create_sheet(sheet_name)
             ws = writer.book[sheet_name]
             _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
-                            year_cols, period_map)
+                            year_cols, period_map, fs_code)
 
     return output.getvalue()
 
