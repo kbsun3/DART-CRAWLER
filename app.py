@@ -488,6 +488,34 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             year_cols = sorted([c for c in pivot.columns if isinstance(c, int)])
             pivot = pivot[["계정명"] + year_cols]
 
+            # ── frmtrm / bfefrmtrm 백필 ──────────────────────────────────────
+            # DART는 한 번의 쿼리에 당기(thstrm)·전기(frmtrm)·전전기(bfefrmtrm)를
+            # 모두 반환함. thstrm 단독 pivot에서 생긴 NaN을 이미 받아온 값으로 보완.
+            # 추정·예측 없음 — API 응답에 이미 있는 숫자만 사용.
+            bf: dict[tuple, float] = {}
+            for col, offset in [("frmtrm_amount", 1), ("bfefrmtrm_amount", 2)]:
+                if col not in subset.columns:
+                    continue
+                for _, r in subset.iterrows():
+                    val = r.get(col)
+                    if val is None or pd.isna(val):
+                        continue
+                    target = int(r["year"]) - offset
+                    if target not in year_cols:
+                        continue
+                    key = (r["display_nm"], target)
+                    if key not in bf:          # 인접 연도(frmtrm) 우선
+                        bf[key] = val
+
+            if bf:
+                for idx, row_p in pivot.iterrows():
+                    dnm = row_p["계정명"]
+                    for yr in year_cols:
+                        if pd.isna(row_p.get(yr)):
+                            bv = bf.get((dnm, yr))
+                            if bv is not None:
+                                pivot.at[idx, yr] = bv
+
             sheet_name = fs_name[:31]
             writer.book.create_sheet(sheet_name)
             ws = writer.book[sheet_name]
