@@ -8,6 +8,8 @@ import streamlit as st
 import requests
 import pandas as pd
 from io import BytesIO
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
 
 API_KEY = st.secrets.get("DART_API_KEY", "f0b490beadb3e0200407e2f237b58bca1ae74ac4")
 BASE_URL = "https://opendart.fss.or.kr/api"
@@ -98,6 +100,161 @@ def _make_display_nm(account_nm: str, account_id: str, is_dup: bool) -> str:
     # 그 외 미등록 패턴은 account_id 말미로 구분
     suffix = account_id.split("_")[-1][:20]
     return f"{account_nm} [{suffix}]"
+
+
+# ── Excel 스타일 ─────────────────────────────────────────────────────────────
+
+_F_NAVY  = PatternFill("solid", fgColor="0F2044")   # 타이틀/헤더
+_F_SUB   = PatternFill("solid", fgColor="DCE6F1")   # 소계 행 (유동자산, 영업이익 등)
+_F_TOTAL = PatternFill("solid", fgColor="B8CCE4")   # 총계 행 (자산총계, 당기순이익 등)
+_F_WHITE = PatternFill("solid", fgColor="FFFFFF")
+
+_FT_TITLE = Font(name="맑은 고딕", bold=True, color="FFFFFF", size=11)
+_FT_HDR   = Font(name="맑은 고딕", bold=True, color="FFFFFF", size=9)
+_FT_BOLD  = Font(name="맑은 고딕", bold=True, size=9)
+_FT_NORM  = Font(name="맑은 고딕", size=9)
+_FT_SMALL = Font(name="맑은 고딕", size=8, color="808080")
+
+_AL_C  = Alignment(horizontal="center", vertical="center")
+_AL_L  = Alignment(horizontal="left",   vertical="center", indent=1)
+_AL_LI = Alignment(horizontal="left",   vertical="center", indent=3)  # 세부항목 들여쓰기
+_AL_R  = Alignment(horizontal="right",  vertical="center")
+
+_NUM_FMT = '#,##0;(#,##0)'   # 양수: 쉼표 / 음수: 괄호
+
+# IFRS element 이름 기반 하이라이트 레벨
+# account_id의 마지막 _ 이후 element name으로 판정
+_HL2_ELEMENTS = {   # 총계 — 진한 파란
+    "Assets", "EquityAndLiabilities", "LiabilitiesAndEquity",
+    "ProfitLoss",            # IS 당기순이익
+    "ComprehensiveIncome",   # CIS 총포괄손익
+    "CashAndCashEquivalentsAtEndOfPeriodCf",
+}
+_HL1_ELEMENTS = {   # 소계 — 연한 파란
+    # BS
+    "CurrentAssets", "NoncurrentAssets",
+    "CurrentLiabilities", "NoncurrentLiabilities",
+    "Liabilities", "Equity",
+    "EquityAttributableToOwnersOfParent",
+    # IS
+    "GrossProfit",
+    "ProfitLossFromOperatingActivities", "OperatingIncomeLoss",
+    "ProfitLossBeforeTax",
+    # CIS
+    "OtherComprehensiveIncome",
+    # CF
+    "CashFlowsFromUsedInOperatingActivities",
+    "CashFlowsFromUsedInInvestingActivities",
+    "CashFlowsFromUsedInFinancingActivities",
+    "CashFlowsFromUsedInOperations",
+    "IncreaseDecreaseInCashAndCashEquivalents",
+    "EffectOfExchangeRateChangesOnCashAndCashEquivalents",
+    "CashAndCashEquivalentsAtBeginningOfPeriodCf",
+}
+
+
+def _hl_level(account_id: str) -> int:
+    """0=일반, 1=소계(연한 파란), 2=총계(진한 파란)"""
+    if not account_id or "표준계정코드 미사용" in account_id:
+        return 0
+    el = account_id.rsplit("_", 1)[-1]
+    if el in _HL2_ELEMENTS:
+        return 2
+    if el in _HL1_ELEMENTS:
+        return 1
+    return 0
+
+
+def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
+                    corp_name: str, fs_name: str,
+                    years: list[int], period_map: dict) -> None:
+    """재무제표 시트를 스타일 포함하여 직접 작성."""
+    year_cols = [c for c in pivot.columns if isinstance(c, int)]
+    n_data_cols = len(year_cols)
+    col_b = 2   # B열부터 시작 (A열 = 좌측 여백)
+    last_col = col_b + n_data_cols  # 계정명(1) + 연도들
+
+    def navy_row(row, height, texts: list, font=_FT_HDR):
+        for offset, text in enumerate(texts):
+            c = ws.cell(row=row, column=col_b + offset, value=text)
+            c.fill = _F_NAVY
+            c.font = font
+            c.alignment = _AL_C if offset > 0 else _AL_L
+        ws.row_dimensions[row].height = height
+
+    # ── Row 1: 타이틀 ──────────────────────────────────────────────────────
+    title_text = f"{corp_name}  ·  {fs_name}"
+    title_cell = ws.cell(row=1, column=col_b, value=title_text)
+    title_cell.fill = _F_NAVY
+    title_cell.font = _FT_TITLE
+    title_cell.alignment = _AL_L
+    ws.merge_cells(start_row=1, start_column=col_b,
+                   end_row=1,   end_column=last_col)
+    ws.row_dimensions[1].height = 30
+
+    # ── Row 2: 단위 ────────────────────────────────────────────────────────
+    for c in range(col_b, last_col + 1):
+        ws.cell(row=2, column=c).fill = _F_NAVY
+    unit_cell = ws.cell(row=2, column=col_b, value="(단위: 원)")
+    unit_cell.font = _FT_SMALL
+    unit_cell.fill = _F_NAVY
+    unit_cell.alignment = _AL_L
+    ws.row_dimensions[2].height = 14
+
+    # ── Row 3: 빈 줄 ───────────────────────────────────────────────────────
+    ws.row_dimensions[3].height = 6
+
+    # ── Row 4: 컬럼 헤더 (과목 / FY2024 …) ────────────────────────────────
+    navy_row(4, 22, ["과  목"] + [f"FY{yr}" for yr in year_cols])
+    ws.row_dimensions[4].height = 22
+
+    # ── Row 5: 기간 서브헤더 ──────────────────────────────────────────────
+    period_texts = ["기간"] + [period_map.get(yr, "") for yr in year_cols]
+    for offset, text in enumerate(period_texts):
+        c = ws.cell(row=5, column=col_b + offset, value=text)
+        c.fill = _F_NAVY
+        c.font = Font(name="맑은 고딕", color="FFFFFF", size=8)
+        c.alignment = _AL_C if offset > 0 else _AL_L
+    ws.row_dimensions[5].height = 15
+
+    # ── Row 6: 빈 구분선 ──────────────────────────────────────────────────
+    ws.row_dimensions[6].height = 4
+
+    # ── Rows 7+: 데이터 ───────────────────────────────────────────────────
+    for i, (_, row_s) in enumerate(pivot.iterrows()):
+        excel_row = 7 + i
+        display_nm = row_s["계정명"]
+        account_id = id_map.get(display_nm, "")
+        level      = _hl_level(account_id)
+
+        fill  = _F_TOTAL if level == 2 else (_F_SUB if level == 1 else _F_WHITE)
+        font  = _FT_BOLD  if level > 0 else _FT_NORM
+        align = _AL_L     if level > 0 else _AL_LI   # 소계/총계는 좌, 세부는 들여쓰기
+
+        nm_cell = ws.cell(row=excel_row, column=col_b, value=display_nm)
+        nm_cell.fill      = fill
+        nm_cell.font      = font
+        nm_cell.alignment = align
+
+        for j, yr in enumerate(year_cols):
+            val = row_s.get(yr)
+            amt_cell = ws.cell(row=excel_row, column=col_b + 1 + j, value=val)
+            amt_cell.fill      = fill
+            amt_cell.font      = font
+            amt_cell.alignment = _AL_R
+            if val is not None:
+                amt_cell.number_format = _NUM_FMT
+
+        ws.row_dimensions[excel_row].height = 16
+
+    # ── 열 너비 ────────────────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 2
+    ws.column_dimensions[get_column_letter(col_b)].width = 40
+    for j in range(n_data_cols):
+        ws.column_dimensions[get_column_letter(col_b + 1 + j)].width = 18
+
+    # ── 틀 고정 (헤더 + 계정명 열) ─────────────────────────────────────────
+    ws.freeze_panes = f"{get_column_letter(col_b + 1)}7"
 
 
 # ── 데이터 로직 ───────────────────────────────────────────────────────────────
@@ -218,8 +375,19 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
     else:
         raw["display_nm"] = raw["account_nm"]
 
+    # display_nm → account_id 매핑 (하이라이트 레벨 판정용)
+    id_map = {}
+    if "account_id" in raw.columns:
+        id_map = raw.groupby("display_nm")["account_id"].first().to_dict()
+
+    # year → 기간 문자열 (헤더 서브행용)
+    period_map = {}
+    if "thstrm_nm" in raw.columns:
+        period_map = raw.groupby("year")["thstrm_nm"].first().to_dict()
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        # 정보 시트
         meta = pd.DataFrame([
             {"항목": "기업명",           "내용": corp_name},
             {"항목": "종목코드",         "내용": stock_code or "-"},
@@ -230,6 +398,7 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         ])
         meta.to_excel(writer, sheet_name="정보", index=False)
 
+        # 원본데이터 시트
         cols_keep = [c for c in ["year", "sj_div", "sj_nm", "account_id",
                                   "account_nm", "thstrm_amount", "fs_div_used"]
                      if c in raw.columns]
@@ -239,17 +408,16 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             "thstrm_amount": "금액(원)", "fs_div_used": "연결/별도",
         }).to_excel(writer, sheet_name="원본데이터", index=False)
 
+        # 재무제표별 스타일 시트
         for fs_code, fs_name in FS_LABELS.items():
             subset = raw[raw["sj_div"] == fs_code].copy()
             if subset.empty:
                 continue
 
-            # 원본 순서 보존: ord 컬럼 기준 정렬 (없으면 입력 순서 그대로)
             if "ord" in subset.columns:
                 subset["ord"] = pd.to_numeric(subset["ord"], errors="coerce")
                 subset = subset.sort_values(["year", "ord"], na_position="last")
 
-            # sort=False 로 groupby가 알파벳 재정렬하지 않도록
             pivot = (
                 subset.groupby(["display_nm", "year"], sort=False)["thstrm_amount"]
                 .first().unstack("year").reset_index()
@@ -258,11 +426,12 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             pivot = pivot.rename(columns={"display_nm": "계정명"})
             year_cols = sorted([c for c in pivot.columns if isinstance(c, int)])
             pivot = pivot[["계정명"] + year_cols]
-            pivot.to_excel(writer, sheet_name=fs_name[:31], index=False)
-            ws = writer.sheets[fs_name[:31]]
-            ws.column_dimensions["A"].width = 45
-            for col_idx in range(2, len(year_cols) + 2):
-                ws.column_dimensions[ws.cell(1, col_idx).column_letter].width = 18
+
+            sheet_name = fs_name[:31]
+            writer.book.create_sheet(sheet_name)
+            ws = writer.book[sheet_name]
+            _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
+                            year_cols, period_map)
 
     return output.getvalue()
 
