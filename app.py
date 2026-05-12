@@ -535,6 +535,13 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
                             if bv is not None:
                                 pivot.at[idx, yr] = bv
 
+            # 전 기간 NaN 행 제거 ─────────────────────────────────────────────
+            # DART는 해당 항목이 없어도 thstrm_amount="-" 인 placeholder 행을
+            # 포함시킴. parse_amount("-")=None → 모든 연도가 NaN인 행이 생성되고
+            # has_vals=False → Level1(노랑/헤더)로 잘못 표시되는 문제 방지.
+            # 실제 소계·합계 행은 항상 값이 있으므로 이 필터에 걸리지 않음.
+            pivot = pivot[pivot[year_cols].notna().any(axis=1)].reset_index(drop=True)
+
             sheet_name = fs_name[:31]
             writer.book.create_sheet(sheet_name)
             ws = writer.book[sheet_name]
