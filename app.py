@@ -549,6 +549,14 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
                 subset["ord"] = pd.to_numeric(subset["ord"], errors="coerce")
                 subset = subset.sort_values(["year", "ord"], na_position="last")
 
+            # SCE: 자본총계(Equity) 열만 추출 → 난잡한 2D 매트릭스 대신 단일 컬럼 뷰
+            if fs_code == "SCE" and "account_id" in subset.columns:
+                sce_total_mask = subset["account_id"].str.contains(
+                    r"(?:^|_)Equity$", regex=True, na=False
+                )
+                if sce_total_mask.any():
+                    subset = subset[sce_total_mask]
+
             pivot = (
                 subset.groupby(["display_nm", "year"], sort=False)["thstrm_amount"]
                 .first().unstack("year").reset_index()
