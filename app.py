@@ -153,14 +153,10 @@ _HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게, indent 1
     # IS는 _hl_level 내에서 sj_div=="IS" 분기로 처리 → 여기선 제외
     # CIS
     "OtherComprehensiveIncome",
-    # CF
+    # CF — 3대 활동 소계만 볼드, 나머지(환율변동·증감·기초) Level 0
     "CashFlowsFromUsedInOperatingActivities",
     "CashFlowsFromUsedInInvestingActivities",
     "CashFlowsFromUsedInFinancingActivities",
-    "CashFlowsFromUsedInOperations",
-    "IncreaseDecreaseInCashAndCashEquivalents",
-    "EffectOfExchangeRateChangesOnCashAndCashEquivalents",
-    "CashAndCashEquivalentsAtBeginningOfPeriodCf",
 }
 
 # CF에서는 ProfitLoss·ComprehensiveIncome이 간접법 출발 세부항목
