@@ -150,10 +150,7 @@ _HL3_ELS = {    # Level 3: 합계/총계 → 초록 배경 + 굵게
 }
 _HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게, indent 1
     # BS는 _hl_level 내에서 sj_div=="BS" 분기로 처리 → 여기선 제외
-    # IS — 매출액(Top line)·영업이익(핵심지표)만 강조
-    # 매출총이익·법인세차감전은 중간 계산값 → Level 0
-    "Revenue", "RevenueFromContractsWithCustomers",
-    "ProfitLossFromOperatingActivities", "OperatingIncomeLoss",
+    # IS는 _hl_level 내에서 sj_div=="IS" 분기로 처리 → 여기선 제외
     # CIS
     "OtherComprehensiveIncome",
     # CF
@@ -193,7 +190,19 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
             return 2
         return 0
 
-    # ── IS / CIS / CF / SCE ──────────────────────────────────────────────────
+    # ── IS ───────────────────────────────────────────────────────────────────
+    if sj_div == "IS":
+        if not account_id or "표준계정코드 미사용" in account_id:
+            return 0
+        el = account_id.rsplit("_", 1)[-1]
+        if el in {"Revenue", "RevenueFromContractsWithCustomers"}:
+            return 3  # 매출액 → 초록
+        if el in {"ProfitLossFromOperatingActivities", "OperatingIncomeLoss",
+                  "ProfitLoss"}:
+            return 1  # 영업이익·당기순이익 → 노란색
+        return 0
+
+    # ── CIS / CF / SCE ───────────────────────────────────────────────────────
     if not has_values:
         return 1  # 값 없는 행 = 대분류 헤더
     if not account_id or "표준계정코드 미사용" in account_id:
