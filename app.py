@@ -130,6 +130,7 @@ _FT_GREY  = Font(name="맑은 고딕",               color="BFBFBF", size=11)  #
 _AL_C  = Alignment(horizontal="center", vertical="center")
 _AL_L  = Alignment(horizontal="left",   vertical="center")
 _AL_L1 = Alignment(horizontal="left",   vertical="center", indent=1)
+_AL_L2 = Alignment(horizontal="left",   vertical="center", indent=2)
 _AL_L3 = Alignment(horizontal="left",   vertical="center", indent=3)
 _AL_R  = Alignment(horizontal="right",  vertical="center")
 
@@ -188,6 +189,8 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
 
     # ── IS ───────────────────────────────────────────────────────────────────
     if sj_div == "IS":
+        if not has_values:
+            return 1  # 구조 헤더(당기순이익의 귀속 등) → indent 0
         if not account_id or "표준계정코드 미사용" in account_id:
             return 0
         el = account_id.rsplit("_", 1)[-1]
@@ -302,8 +305,8 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
         elif level == 1:
             fill, font, nm_align = _F_YELLOW, _FT_BOLD, _AL_L
         else:
-            # BS는 계층 단순화로 세부항목 indent 1, 그 외 indent 3
-            detail_align = _AL_L1 if fs_code == "BS" else _AL_L3
+            # BS: indent 1 / 그 외(IS·CIS·CF·SCE): indent 2
+            detail_align = _AL_L1 if fs_code == "BS" else _AL_L2
             fill, font, nm_align = _F_WHITE,  _FT_NORM, detail_align
 
         _w(er, CB, display_nm, fill, font, nm_align)
