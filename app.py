@@ -154,6 +154,7 @@ _HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게, indent 1
     "CurrentLiabilities", "NoncurrentLiabilities",
     "Liabilities", "Equity", "EquityAttributableToOwnersOfParent",
     # IS
+    "Revenue", "RevenueFromContractsWithCustomers",   # 매출액
     "GrossProfit",
     "ProfitLossFromOperatingActivities", "OperatingIncomeLoss",
     "ProfitLossBeforeTax",
