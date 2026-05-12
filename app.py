@@ -8,7 +8,7 @@ import streamlit as st
 import requests
 import pandas as pd
 from io import BytesIO
-from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 API_KEY = st.secrets.get("DART_API_KEY", "f0b490beadb3e0200407e2f237b58bca1ae74ac4")
@@ -102,40 +102,54 @@ def _make_display_nm(account_nm: str, account_id: str, is_dup: bool) -> str:
     return f"{account_nm} [{suffix}]"
 
 
-# ── Excel 스타일 ─────────────────────────────────────────────────────────────
+# ── Excel 스타일 상수 (디자인 사양 고정) ─────────────────────────────────────
 
-_F_NAVY  = PatternFill("solid", fgColor="0F2044")   # 타이틀/헤더
-_F_SUB   = PatternFill("solid", fgColor="DCE6F1")   # 소계 행 (유동자산, 영업이익 등)
-_F_TOTAL = PatternFill("solid", fgColor="B8CCE4")   # 총계 행 (자산총계, 당기순이익 등)
-_F_WHITE = PatternFill("solid", fgColor="FFFFFF")
+# 배경색
+_F_BLACK  = PatternFill("solid", fgColor="000000")  # 제목 배경
+_F_NAVY   = PatternFill("solid", fgColor="1F4E78")  # 1차 헤더
+_F_LBLUE  = PatternFill("solid", fgColor="D9E1F2")  # 2차 헤더 (결산일)
+_F_YELLOW = PatternFill("solid", fgColor="FFF2CC")  # 대분류 헤더
+_F_GREEN  = PatternFill("solid", fgColor="E2EFDA")  # 합계/총계
+_F_WHITE  = PatternFill("solid", fgColor="FFFFFF")  # 기본 배경
 
-_FT_TITLE = Font(name="맑은 고딕", bold=True, color="FFFFFF", size=11)
-_FT_HDR   = Font(name="맑은 고딕", bold=True, color="FFFFFF", size=9)
-_FT_BOLD  = Font(name="맑은 고딕", bold=True, size=9)
-_FT_NORM  = Font(name="맑은 고딕", size=9)
-_FT_SMALL = Font(name="맑은 고딕", size=8, color="808080")
+# 테두리
+_S_THIN   = Side(style="thin",   color="000000")
+_S_NONE   = Side(style=None)
+_S_DOUBLE = Side(style="double", color="000000")
 
+# 글꼴
+_FT_TITLE = Font(name="맑은 고딕", bold=True,   color="FFFFFF", size=14)
+_FT_H1    = Font(name="맑은 고딕", bold=True,   color="FFFFFF", size=11)
+_FT_H2    = Font(name="맑은 고딕", bold=True,   color="000000", size=11)
+_FT_BOLD  = Font(name="맑은 고딕", bold=True,   color="000000", size=11)
+_FT_NORM  = Font(name="맑은 고딕",               color="000000", size=11)
+_FT_UNIT  = Font(name="맑은 고딕", italic=True,  color="000000", size=9)
+_FT_GREY  = Font(name="맑은 고딕",               color="BFBFBF", size=11)  # 빈값
+
+# 정렬
 _AL_C  = Alignment(horizontal="center", vertical="center")
-_AL_L  = Alignment(horizontal="left",   vertical="center", indent=1)
-_AL_LI = Alignment(horizontal="left",   vertical="center", indent=3)  # 세부항목 들여쓰기
+_AL_L  = Alignment(horizontal="left",   vertical="center")
+_AL_L1 = Alignment(horizontal="left",   vertical="center", indent=1)
+_AL_L3 = Alignment(horizontal="left",   vertical="center", indent=3)
 _AL_R  = Alignment(horizontal="right",  vertical="center")
 
-_NUM_FMT = '#,##0;(#,##0)'   # 양수: 쉼표 / 음수: 괄호
+# 숫자 서식: 양수=콤마 / 음수=괄호 / 0=하이픈
+_NUM_FMT = '#,##0;(#,##0);-'
 
-# IFRS element 이름 기반 하이라이트 레벨
-# account_id의 마지막 _ 이후 element name으로 판정
-_HL2_ELEMENTS = {   # 총계 — 진한 파란
+# ── 하이라이트 레벨 (IFRS element name 기반) ─────────────────────────────────
+# account_id의 마지막 _ 이후 element name으로 판정 (한글 계정명 의존 X)
+
+_HL3_ELS = {    # Level 3: 합계/총계 → 초록 배경 + 굵게
     "Assets", "EquityAndLiabilities", "LiabilitiesAndEquity",
-    "ProfitLoss",            # IS 당기순이익
-    "ComprehensiveIncome",   # CIS 총포괄손익
+    "ProfitLoss",
+    "ComprehensiveIncome",
     "CashAndCashEquivalentsAtEndOfPeriodCf",
 }
-_HL1_ELEMENTS = {   # 소계 — 연한 파란
+_HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게
     # BS
     "CurrentAssets", "NoncurrentAssets",
     "CurrentLiabilities", "NoncurrentLiabilities",
-    "Liabilities", "Equity",
-    "EquityAttributableToOwnersOfParent",
+    "Liabilities", "Equity", "EquityAttributableToOwnersOfParent",
     # IS
     "GrossProfit",
     "ProfitLossFromOperatingActivities", "OperatingIncomeLoss",
@@ -153,108 +167,135 @@ _HL1_ELEMENTS = {   # 소계 — 연한 파란
 }
 
 
-def _hl_level(account_id: str) -> int:
-    """0=일반, 1=소계(연한 파란), 2=총계(진한 파란)"""
+def _hl_level(account_id: str, has_values: bool) -> int:
+    """
+    0 = 세부항목  (흰색, 보통, indent 3)
+    1 = 대분류    (노랑, 굵게, 값 없음)
+    2 = 중분류/소계 (흰색, 굵게, indent 1)
+    3 = 합계/총계  (초록, 굵게)
+    """
+    if not has_values:
+        return 1  # 값 없는 행 = 대분류 헤더
     if not account_id or "표준계정코드 미사용" in account_id:
         return 0
     el = account_id.rsplit("_", 1)[-1]
-    if el in _HL2_ELEMENTS:
+    if el in _HL3_ELS:
+        return 3
+    if el in _HL2_ELS:
         return 2
-    if el in _HL1_ELEMENTS:
-        return 1
     return 0
 
 
 def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
                     corp_name: str, fs_name: str,
                     years: list[int], period_map: dict) -> None:
-    """재무제표 시트를 스타일 포함하여 직접 작성."""
+    """재무제표 시트 작성 — 디자인 사양 준수."""
     year_cols = [c for c in pivot.columns if isinstance(c, int)]
-    n_data_cols = len(year_cols)
-    col_b = 2   # B열부터 시작 (A열 = 좌측 여백)
-    last_col = col_b + n_data_cols  # 계정명(1) + 연도들
+    n_yr = len(year_cols)
+    CB   = 2   # B열 = column index 2
+    LAST = CB + n_yr  # 마지막 데이터 열
 
-    def navy_row(row, height, texts: list, font=_FT_HDR):
-        for offset, text in enumerate(texts):
-            c = ws.cell(row=row, column=col_b + offset, value=text)
-            c.fill = _F_NAVY
-            c.font = font
-            c.alignment = _AL_C if offset > 0 else _AL_L
-        ws.row_dimensions[row].height = height
+    def _w(row, col, value=None, fill=_F_WHITE, font=_FT_NORM,
+           align=_AL_L, num_fmt=None, border=None):
+        cell = ws.cell(row=row, column=col, value=value)
+        cell.fill = fill; cell.font = font; cell.alignment = align
+        if num_fmt:
+            cell.number_format = num_fmt
+        if border:
+            cell.border = border
+        return cell
 
-    # ── Row 1: 타이틀 ──────────────────────────────────────────────────────
-    title_text = f"{corp_name}  ·  {fs_name}"
-    title_cell = ws.cell(row=1, column=col_b, value=title_text)
-    title_cell.fill = _F_NAVY
-    title_cell.font = _FT_TITLE
-    title_cell.alignment = _AL_L
-    ws.merge_cells(start_row=1, start_column=col_b,
-                   end_row=1,   end_column=last_col)
-    ws.row_dimensions[1].height = 30
+    # ── 1행: 상단 여백 ────────────────────────────────────────────────────
+    for c in range(CB, LAST + 1):
+        _w(1, c)
+    ws.row_dimensions[1].height = 8
 
-    # ── Row 2: 단위 ────────────────────────────────────────────────────────
-    for c in range(col_b, last_col + 1):
-        ws.cell(row=2, column=c).fill = _F_NAVY
-    unit_cell = ws.cell(row=2, column=col_b, value="(단위: 원)")
-    unit_cell.font = _FT_SMALL
-    unit_cell.fill = _F_NAVY
-    unit_cell.alignment = _AL_L
-    ws.row_dimensions[2].height = 14
+    # ── 2행: 메인 제목 ────────────────────────────────────────────────────
+    _w(2, CB, f"{corp_name} - {fs_name}", _F_BLACK, _FT_TITLE, _AL_L)
+    for c in range(CB + 1, LAST + 1):
+        _w(2, c, fill=_F_BLACK)
+    ws.merge_cells(start_row=2, start_column=CB, end_row=2, end_column=LAST)
+    ws.row_dimensions[2].height = 30
 
-    # ── Row 3: 빈 줄 ───────────────────────────────────────────────────────
-    ws.row_dimensions[3].height = 6
+    # ── 3행: 단위 ─────────────────────────────────────────────────────────
+    _w(3, CB, "(단위: 원)", _F_WHITE, _FT_UNIT, _AL_L)
+    for c in range(CB + 1, LAST + 1):
+        _w(3, c)
+    ws.row_dimensions[3].height = 16
 
-    # ── Row 4: 컬럼 헤더 (과목 / FY2024 …) ────────────────────────────────
-    navy_row(4, 22, ["과  목"] + [f"FY{yr}" for yr in year_cols])
-    ws.row_dimensions[4].height = 22
+    # ── 4행: 빈 줄 ────────────────────────────────────────────────────────
+    for c in range(CB, LAST + 1):
+        _w(4, c)
+    ws.row_dimensions[4].height = 8
 
-    # ── Row 5: 기간 서브헤더 ──────────────────────────────────────────────
-    period_texts = ["기간"] + [period_map.get(yr, "") for yr in year_cols]
-    for offset, text in enumerate(period_texts):
-        c = ws.cell(row=5, column=col_b + offset, value=text)
-        c.fill = _F_NAVY
-        c.font = Font(name="맑은 고딕", color="FFFFFF", size=8)
-        c.alignment = _AL_C if offset > 0 else _AL_L
-    ws.row_dimensions[5].height = 15
+    # ── 5행: 1차 헤더 (FY 연도) ───────────────────────────────────────────
+    _w(5, CB, "과  목", _F_NAVY, _FT_H1, _AL_C)
+    for j, yr in enumerate(year_cols):
+        _w(5, CB + 1 + j, f"FY{yr}", _F_NAVY, _FT_H1, _AL_C)
+    ws.row_dimensions[5].height = 22
 
-    # ── Row 6: 빈 구분선 ──────────────────────────────────────────────────
-    ws.row_dimensions[6].height = 4
+    # ── 6행: 2차 헤더 (기간 상세) ─────────────────────────────────────────
+    _w(6, CB, "기간", _F_LBLUE, _FT_H2, _AL_C)
+    for j, yr in enumerate(year_cols):
+        _w(6, CB + 1 + j, period_map.get(yr, ""), _F_LBLUE, _FT_H2, _AL_C)
+    ws.row_dimensions[6].height = 18
 
-    # ── Rows 7+: 데이터 ───────────────────────────────────────────────────
+    # ── 7행: 빈 줄 ────────────────────────────────────────────────────────
+    for c in range(CB, LAST + 1):
+        _w(7, c)
+    ws.row_dimensions[7].height = 6
+
+    # ── 8행~: 데이터 (1패스: 셀 작성 + 레벨 기록) ────────────────────────
+    DATA_START = 8
+    row_levels: list[tuple[int, int]] = []  # (excel_row, level)
+
     for i, (_, row_s) in enumerate(pivot.iterrows()):
-        excel_row = 7 + i
+        er = DATA_START + i
         display_nm = row_s["계정명"]
         account_id = id_map.get(display_nm, "")
-        level      = _hl_level(account_id)
+        vals       = [row_s.get(yr) for yr in year_cols]
+        has_vals   = any(v is not None for v in vals)
+        level      = _hl_level(account_id, has_vals)
+        row_levels.append((er, level))
 
-        fill  = _F_TOTAL if level == 2 else (_F_SUB if level == 1 else _F_WHITE)
-        font  = _FT_BOLD  if level > 0 else _FT_NORM
-        align = _AL_L     if level > 0 else _AL_LI   # 소계/총계는 좌, 세부는 들여쓰기
+        # 행 스타일
+        if level == 3:
+            fill, font, nm_align = _F_GREEN,  _FT_BOLD, _AL_L1
+        elif level == 2:
+            fill, font, nm_align = _F_WHITE,  _FT_BOLD, _AL_L1
+        elif level == 1:
+            fill, font, nm_align = _F_YELLOW, _FT_BOLD, _AL_L
+        else:
+            fill, font, nm_align = _F_WHITE,  _FT_NORM, _AL_L3
 
-        nm_cell = ws.cell(row=excel_row, column=col_b, value=display_nm)
-        nm_cell.fill      = fill
-        nm_cell.font      = font
-        nm_cell.alignment = align
+        _w(er, CB, display_nm, fill, font, nm_align)
 
         for j, yr in enumerate(year_cols):
-            val = row_s.get(yr)
-            amt_cell = ws.cell(row=excel_row, column=col_b + 1 + j, value=val)
-            amt_cell.fill      = fill
-            amt_cell.font      = font
-            amt_cell.alignment = _AL_R
-            if val is not None:
-                amt_cell.number_format = _NUM_FMT
+            val  = row_s.get(yr)
+            fnt  = _FT_GREY if val is None else font
+            cell = _w(er, CB + 1 + j, 0 if val is None else val,
+                      fill, fnt, _AL_R, _NUM_FMT)
 
-        ws.row_dimensions[excel_row].height = 16
+        ws.row_dimensions[er].height = 17
 
-    # ── 열 너비 ────────────────────────────────────────────────────────────
+    # ── 2패스: 테두리 ─────────────────────────────────────────────────────
+    # 마지막 총계 행 → double bottom
+    last_total = max((r for r, lv in row_levels if lv == 3), default=None)
+
+    for er, level in row_levels:
+        if level in (2, 3):
+            bot = _S_DOUBLE if er == last_total else _S_THIN
+            bdr = Border(top=_S_THIN, bottom=bot)
+            for c in range(CB, LAST + 1):
+                ws.cell(row=er, column=c).border = bdr
+
+    # ── 열 너비 / 틀 고정 ─────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 2
-    ws.column_dimensions[get_column_letter(col_b)].width = 40
-    for j in range(n_data_cols):
-        ws.column_dimensions[get_column_letter(col_b + 1 + j)].width = 18
+    ws.column_dimensions[get_column_letter(CB)].width = 40
+    for j in range(n_yr):
+        ws.column_dimensions[get_column_letter(CB + 1 + j)].width = 17
 
-    # ── 틀 고정 (헤더 + 계정명 열) ─────────────────────────────────────────
-    ws.freeze_panes = f"{get_column_letter(col_b + 1)}7"
+    ws.freeze_panes = f"{get_column_letter(CB + 1)}8"
 
 
 # ── 데이터 로직 ───────────────────────────────────────────────────────────────
