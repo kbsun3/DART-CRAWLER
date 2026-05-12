@@ -150,11 +150,10 @@ _HL3_ELS = {    # Level 3: 합계/총계 → 초록 배경 + 굵게
 }
 _HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게, indent 1
     # BS는 _hl_level 내에서 sj_div=="BS" 분기로 처리 → 여기선 제외
-    # IS
-    "Revenue", "RevenueFromContractsWithCustomers",   # 매출액
-    "GrossProfit",
+    # IS — 매출액(Top line)·영업이익(핵심지표)만 강조
+    # 매출총이익·법인세차감전은 중간 계산값 → Level 0
+    "Revenue", "RevenueFromContractsWithCustomers",
     "ProfitLossFromOperatingActivities", "OperatingIncomeLoss",
-    "ProfitLossBeforeTax",
     # CIS
     "OtherComprehensiveIncome",
     # CF
