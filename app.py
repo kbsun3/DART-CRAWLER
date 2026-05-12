@@ -216,7 +216,22 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
             return 2  # 기타포괄손익 → 볼드
         return 0
 
-    # ── CF / SCE ─────────────────────────────────────────────────────────────
+    # ── SCE ──────────────────────────────────────────────────────────────────
+    if sj_div == "SCE":
+        if not has_values:
+            return 1  # 구조 헤더
+        if not account_id or "표준계정코드 미사용" in account_id:
+            return 0
+        el = account_id.rsplit("_", 1)[-1]
+        # 기말잔액 계열 → 초록
+        if "EndOfPeriod" in el or "ClosingBalance" in el:
+            return 3
+        # 기초잔액 계열 → 노란색
+        if "BeginningOfPeriod" in el or "OpeningBalance" in el:
+            return 1
+        return 0
+
+    # ── CF ───────────────────────────────────────────────────────────────────
     if not has_values:
         return 1  # 값 없는 행 = 대분류 헤더
     if not account_id or "표준계정코드 미사용" in account_id:
