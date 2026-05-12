@@ -285,15 +285,20 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
         # Level 3(총계): indent 0 — 가장 돌출되게
         # Level 2(소계): indent 1
         # Level 1(헤더): indent 0
-        # Level 0(세부): indent 3
+        # Level 0(세부): BS는 indent 1, 그 외 indent 3
         if level == 3:
             fill, font, nm_align = _F_GREEN,  _FT_BOLD, _AL_L
         elif level == 2:
-            fill, font, nm_align = _F_WHITE,  _FT_BOLD, _AL_L1
+            # BS: 부채총계/자본총계는 총계와 같은 indent 0 (볼드만 구분)
+            # IS/CIS/CF: 소계는 indent 1
+            sub_align = _AL_L if fs_code == "BS" else _AL_L1
+            fill, font, nm_align = _F_WHITE,  _FT_BOLD, sub_align
         elif level == 1:
             fill, font, nm_align = _F_YELLOW, _FT_BOLD, _AL_L
         else:
-            fill, font, nm_align = _F_WHITE,  _FT_NORM, _AL_L3
+            # BS는 계층 단순화로 세부항목 indent 1, 그 외 indent 3
+            detail_align = _AL_L1 if fs_code == "BS" else _AL_L3
+            fill, font, nm_align = _F_WHITE,  _FT_NORM, detail_align
 
         _w(er, CB, display_nm, fill, font, nm_align)
 
