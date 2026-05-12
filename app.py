@@ -149,10 +149,7 @@ _HL3_ELS = {    # Level 3: 합계/총계 → 초록 배경 + 굵게
     "CashAndCashEquivalentsAtEndOfPeriodCf",
 }
 _HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게, indent 1
-    # BS
-    "CurrentAssets", "NoncurrentAssets",
-    "CurrentLiabilities", "NoncurrentLiabilities",
-    "Liabilities", "Equity", "EquityAttributableToOwnersOfParent",
+    # BS는 _hl_level 내에서 sj_div=="BS" 분기로 처리 → 여기선 제외
     # IS
     "Revenue", "RevenueFromContractsWithCustomers",   # 매출액
     "GrossProfit",
@@ -178,14 +175,24 @@ _CF_NOT_TOTAL = {"ProfitLoss", "ComprehensiveIncome"}
 def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
     """
     0 = 세부항목  (흰색, 보통, indent 3)
-    1 = 대분류    (노랑, 굵게, 값 없음)
-    2 = 중분류/소계 (흰색, 굵게, indent 1)
+    1 = 대분류    (노랑, 굵게, 값 없음)  ― BS에서는 미사용
+    2 = 중분류/소계 (흰색, 굵게, indent 1) ― BS에서는 미사용
     3 = 합계/총계  (초록, 굵게, indent 0)
 
     sj_div: 재무제표 구분 코드 (BS/IS/CIS/CF/SCE).
-    같은 element name이라도 CF에서는 세부항목으로 처리해야 하는
-    경우가 있어 sj_div를 함께 받아 판정.
     """
+    # ── BS ───────────────────────────────────────────────────────────────────
+    if sj_div == "BS":
+        if not account_id or "표준계정코드 미사용" in account_id:
+            return 0
+        el = account_id.rsplit("_", 1)[-1]
+        if el in _HL3_ELS:
+            return 3
+        if el in {"Liabilities", "Equity"}:   # 부채총계, 자본총계
+            return 2
+        return 0
+
+    # ── IS / CIS / CF / SCE ──────────────────────────────────────────────────
     if not has_values:
         return 1  # 값 없는 행 = 대분류 헤더
     if not account_id or "표준계정코드 미사용" in account_id:
