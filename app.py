@@ -409,23 +409,26 @@ def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
 
     def _search(rows: pd.DataFrame, amount_col: str):
         """rows에서 패턴 매칭 후 (value, display_nm) 반환, 없으면 (None, None)."""
+        if amount_col not in rows.columns:
+            return None, None
         # 1차: account_id 패턴
-        for pat in patterns:
-            m = rows[rows["account_id"].str.contains(pat, na=False, regex=False)]
-            if not m.empty:
-                v = m.iloc[0][amount_col]
-                if v is not None and not pd.isna(v):
-                    dnm = m.iloc[0]["display_nm"] if "display_nm" in m.columns else None
-                    return v, dnm
+        if "account_id" in rows.columns:
+            for pat in patterns:
+                m = rows[rows["account_id"].str.contains(pat, na=False, regex=False)]
+                if not m.empty:
+                    v = m.iloc[0].get(amount_col)
+                    if v is not None and not pd.isna(v):
+                        dnm = m.iloc[0].get("display_nm")
+                        return v, dnm
         # 2차: account_nm 한국어 fallback
         if nm_fallbacks and "account_nm" in rows.columns:
             for nm_pat in nm_fallbacks:
                 m = rows[rows["account_nm"].str.contains(nm_pat, na=False, regex=False)]
                 m = m[~m["account_nm"].str.contains("합계|총계", na=False)]
                 if not m.empty:
-                    v = m.iloc[0][amount_col]
+                    v = m.iloc[0].get(amount_col)
                     if v is not None and not pd.isna(v):
-                        dnm = m.iloc[0]["display_nm"] if "display_nm" in m.columns else None
+                        dnm = m.iloc[0].get("display_nm")
                         return v, dnm
         return None, None
 
@@ -1086,9 +1089,12 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         # ── Cash Flow Overview 분석 시트 ──────────────────────────────────
         all_year_cols = sorted(raw["year"].unique().tolist())
         ws_cfo = writer.book.create_sheet("Cash Flow Overview")
-        _write_cfo_sheet(ws_cfo, raw, corp_name, all_year_cols, period_map,
-                         fs_row_maps=fs_row_maps,
-                         fs_sheet_names={k: v for k, v in FS_LABELS.items()})
+        try:
+            _write_cfo_sheet(ws_cfo, raw, corp_name, all_year_cols, period_map,
+                             fs_row_maps=fs_row_maps,
+                             fs_sheet_names={k: v for k, v in FS_LABELS.items()})
+        except Exception as _cfo_err:
+            ws_cfo.cell(row=2, column=2, value=f"[CFO 시트 생성 오류] {_cfo_err}")
 
     return output.getvalue()
 
