@@ -1,6 +1,8 @@
+import os
 import time
 import zipfile
 import io
+import json
 import xml.etree.ElementTree as ET
 import datetime
 
@@ -729,6 +731,13 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_corp_codes() -> pd.DataFrame:
+    # 1순위: repo에 번들된 파일 (Streamlit Cloud에서 DART API 차단 대비)
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _bundle = os.path.join(_here, "corp_codes.json")
+    if os.path.exists(_bundle):
+        with open(_bundle, encoding="utf-8") as f:
+            return pd.DataFrame(json.load(f))
+    # 2순위: DART API 직접 호출 (로컬 실행 또는 파일 없을 때)
     r = requests.get(f"{BASE_URL}/corpCode.xml", params={"crtfc_key": API_KEY}, timeout=30)
     r.raise_for_status()
     z = zipfile.ZipFile(io.BytesIO(r.content))
