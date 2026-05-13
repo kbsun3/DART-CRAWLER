@@ -296,7 +296,7 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
     ws.row_dimensions[2].height = 30
 
     # ── 3행: 단위 ─────────────────────────────────────────────────────────
-    _w(3, CB, "(단위: 원)", _F_WHITE, _FT_UNIT, _AL_L)
+    _w(3, CB, "(단위: 억원)", _F_WHITE, _FT_UNIT, _AL_L)
     for c in range(CB + 1, LAST + 1):
         _w(3, c)
     ws.row_dimensions[3].height = 16
@@ -698,7 +698,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         _w(R["title"], c, fill=_F_BLACK, font=_FT_H1)
     ws.row_dimensions[R["title"]].height = 22
 
-    _w(R["unit"], CB, "(단위: 원)", _F_WHITE, _FT_UNIT, _AL_L)
+    _w(R["unit"], CB, "(단위: 억원)", _F_WHITE, _FT_UNIT, _AL_L)
     ws.row_dimensions[R["unit"]].height = 14
     _blank(R["blank1"])
 
@@ -977,6 +977,14 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             if col in raw.columns:
                 negate = cf_mask & outflow_mask & raw[col].notna() & (raw[col] > 0)
                 raw.loc[negate, col] = -raw.loc[negate, col]
+
+    # ── 단위 변환: 원 → 억원 (반올림) ─────────────────────────────────────────
+    _EOKWON = 100_000_000
+    for col in ["thstrm_amount", "frmtrm_amount", "bfefrmtrm_amount"]:
+        if col in raw.columns:
+            raw[col] = raw[col].apply(
+                lambda v: round(v / _EOKWON) if v is not None and not pd.isna(v) else v
+            )
 
     # Fix #3: 연도별 계정명 변경(리네임) 정규화
     # 동일 account_id가 연도마다 다른 account_nm을 가질 때 가장 최근 연도 기준으로 통일.
