@@ -1090,9 +1090,13 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             sheet_name = fs_name[:31]
             writer.book.create_sheet(sheet_name)
             ws = writer.book[sheet_name]
-            nm_to_row = _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
-                                        year_cols, period_map, fs_code)
-            fs_row_maps[fs_code] = nm_to_row
+            try:
+                nm_to_row = _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
+                                            year_cols, period_map, fs_code)
+                fs_row_maps[fs_code] = nm_to_row
+            except Exception as _fs_err:
+                ws.cell(row=2, column=2, value=f"[시트 생성 오류] {_fs_err}")
+                fs_row_maps[fs_code] = {}
 
         # ── Cash Flow Overview 분석 시트 ──────────────────────────────────
         all_year_cols = sorted(raw["year"].unique().tolist())
@@ -1286,7 +1290,12 @@ if submitted and query.strip():
     </div>
     """, unsafe_allow_html=True)
 
-    excel_bytes = build_excel(corp_code, corp_name, stock_code, years, reprt_code)
+    try:
+        excel_bytes = build_excel(corp_code, corp_name, stock_code, years, reprt_code)
+    except Exception as _build_err:
+        st.error(f"Excel 생성 오류: {_build_err}")
+        st.exception(_build_err)
+        excel_bytes = None
 
     if excel_bytes:
         fs_div_used = "CFS"  # build_excel 내부에서 결정되므로 표시는 생략
