@@ -166,7 +166,10 @@ _HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게, indent 1
     # IS는 _hl_level 내에서 sj_div=="IS" 분기로 처리 → 여기선 제외
     # CIS
     "OtherComprehensiveIncome",
-    # CF — 3대 활동 소계만 볼드, 나머지(환율변동·증감·기초) Level 0
+    # CF는 _hl_level 내에서 sj_div=="CF" 분기로 처리 → 여기선 제외
+}
+
+_CF_ACTIVITY_ELS = {   # CF 3대 활동 소계 → Level 1 (노란색 굵게)
     "CashFlowsFromUsedInOperatingActivities",
     "CashFlowsFromUsedInInvestingActivities",
     "CashFlowsFromUsedInFinancingActivities",
@@ -249,12 +252,12 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
     if not account_id or "표준계정코드 미사용" in account_id:
         return 0
     el = account_id.rsplit("_", 1)[-1]
-    if sj_div == "CF" and el in _CF_NOT_TOTAL:
+    if el in _CF_NOT_TOTAL:
         return 0
     if el in _HL3_ELS:
         return 3
-    if el in _HL2_ELS:
-        return 2
+    if el in _CF_ACTIVITY_ELS:
+        return 1  # 노란색 굵게
     return 0
 
 
