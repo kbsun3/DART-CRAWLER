@@ -13,7 +13,10 @@ from io import BytesIO
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-API_KEY = st.secrets.get("DART_API_KEY", "f0b490beadb3e0200407e2f237b58bca1ae74ac4")
+API_KEY = (
+    os.environ.get("DART_API_KEY")
+    or st.secrets.get("DART_API_KEY", "f0b490beadb3e0200407e2f237b58bca1ae74ac4")
+)
 BASE_URL = "https://opendart.fss.or.kr/api"
 
 REPORT_TYPES = {
