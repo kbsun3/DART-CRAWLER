@@ -384,12 +384,16 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
 # ── Cash Flow Overview 분석 시트 ──────────────────────────────────────────────
 
 def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
-                 year_cols: list) -> dict:
-    """raw에서 특정 XBRL 패턴의 계정을 연도별로 추출."""
+                 year_cols: list, nm_fallbacks: list | None = None) -> dict:
+    """raw에서 특정 XBRL 패턴의 계정을 연도별로 추출.
+    patterns: account_id 부분일치 목록 (우선순위 순)
+    nm_fallbacks: account_nm 부분일치 목록 (ID 매칭 실패 시 fallback)
+    """
     sub = raw[raw["sj_div"] == sj_div]
     result = {yr: None for yr in year_cols}
     for yr in year_cols:
         yr_rows = sub[sub["year"] == yr]
+        # 1차: account_id 패턴 매칭
         for pat in patterns:
             m = yr_rows[yr_rows["account_id"].str.contains(pat, na=False, regex=False)]
             if not m.empty:
@@ -397,6 +401,17 @@ def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
                 if v is not None and not pd.isna(v):
                     result[yr] = v
                     break
+        # 2차: account_nm 한국어 fallback (표준계정코드 미사용 기업 대응)
+        if result[yr] is None and nm_fallbacks and "account_nm" in yr_rows.columns:
+            for nm_pat in nm_fallbacks:
+                m = yr_rows[yr_rows["account_nm"].str.contains(nm_pat, na=False, regex=False)]
+                # 합계·총계 행은 제외 (account_nm에 '합계' 포함 시 스킵)
+                m = m[~m["account_nm"].str.contains("합계|총계", na=False)]
+                if not m.empty:
+                    v = m.iloc[0]["thstrm_amount"]
+                    if v is not None and not pd.isna(v):
+                        result[yr] = v
+                        break
     return result
 
 
@@ -500,11 +515,19 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     cogs   = _cfo_extract(raw, "IS", ["CostOfSales", "CostOfGoodsSold"], year_cols)
     ar     = _cfo_extract(raw, "BS",
                           ["TradeAndOtherCurrentReceivables", "TradeReceivables",
-                           "TradeAndOtherReceivables"], year_cols)
-    inv    = _cfo_extract(raw, "BS", ["Inventories"], year_cols)
+                           "TradeAndOtherReceivables", "CurrentTradeReceivables",
+                           "AccountsAndNotesReceivableCurrent"],
+                          year_cols,
+                          nm_fallbacks=["매출채권"])
+    inv    = _cfo_extract(raw, "BS",
+                          ["Inventories", "CurrentInventories"],
+                          year_cols,
+                          nm_fallbacks=["재고자산"])
     ap     = _cfo_extract(raw, "BS",
-                          ["TradeAndOtherCurrentPayables", "TradeAndOtherPayables"],
-                          year_cols)
+                          ["TradeAndOtherCurrentPayables", "TradeAndOtherPayables",
+                           "TradePayables", "CurrentTradePayables"],
+                          year_cols,
+                          nm_fallbacks=["매입채무"])
     ppe    = _cfo_extract(raw, "CF",
                           ["PurchaseOfPropertyPlantAndEquipment"], year_cols)
     intan  = _cfo_extract(raw, "CF",
