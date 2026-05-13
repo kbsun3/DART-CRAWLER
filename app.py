@@ -1041,27 +1041,34 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         period_map = raw.groupby("year")["thstrm_nm"].first().to_dict()
 
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+    try:
+      with pd.ExcelWriter(output, engine="openpyxl") as writer:
         # 정보 시트
-        meta = pd.DataFrame([
-            {"항목": "기업명",           "내용": corp_name},
-            {"항목": "종목코드",         "내용": stock_code or "-"},
-            {"항목": "DART corp_code",   "내용": corp_code},
-            {"항목": "재무제표 종류",    "내용": fs_label},
-            {"항목": "수집 연도",        "내용": f"{years[0]}~{years[-1]}"},
-            {"항목": "수집일",           "내용": pd.Timestamp.now().strftime("%Y-%m-%d")},
-        ])
-        meta.to_excel(writer, sheet_name="정보", index=False)
+        try:
+            meta = pd.DataFrame([
+                {"항목": "기업명",           "내용": corp_name},
+                {"항목": "종목코드",         "내용": stock_code or "-"},
+                {"항목": "DART corp_code",   "내용": corp_code},
+                {"항목": "재무제표 종류",    "내용": fs_label},
+                {"항목": "수집 연도",        "내용": f"{years[0]}~{years[-1]}"},
+                {"항목": "수집일",           "내용": pd.Timestamp.now().strftime("%Y-%m-%d")},
+            ])
+            meta.to_excel(writer, sheet_name="정보", index=False)
+        except Exception as _e:
+            pass  # 정보 시트 실패해도 계속 진행
 
         # 원본데이터 시트
-        cols_keep = [c for c in ["year", "sj_div", "sj_nm", "account_id",
-                                  "account_nm", "thstrm_amount", "fs_div_used"]
-                     if c in raw.columns]
-        raw[cols_keep].rename(columns={
-            "year": "연도", "sj_div": "재무제표구분코드", "sj_nm": "재무제표명",
-            "account_id": "계정ID", "account_nm": "계정명",
-            "thstrm_amount": "금액(억원)", "fs_div_used": "연결/별도",
-        }).to_excel(writer, sheet_name="원본데이터", index=False)
+        try:
+            cols_keep = [c for c in ["year", "sj_div", "sj_nm", "account_id",
+                                      "account_nm", "thstrm_amount", "fs_div_used"]
+                         if c in raw.columns]
+            raw[cols_keep].rename(columns={
+                "year": "연도", "sj_div": "재무제표구분코드", "sj_nm": "재무제표명",
+                "account_id": "계정ID", "account_nm": "계정명",
+                "thstrm_amount": "금액(억원)", "fs_div_used": "연결/별도",
+            }).to_excel(writer, sheet_name="원본데이터", index=False)
+        except Exception as _e:
+            pass  # 원본데이터 시트 실패해도 계속 진행
 
         # 재무제표별 스타일 시트
         fs_row_maps: dict[str, dict] = {}   # {fs_code: {display_nm: excel_row}}
@@ -1148,6 +1155,23 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
                              fs_sheet_names={k: v for k, v in FS_LABELS.items()})
         except Exception as _cfo_err:
             ws_cfo.cell(row=2, column=2, value=f"[CFO 시트 생성 오류] {_cfo_err}")
+
+    except Exception as _wb_err:
+        # with 블록 자체의 예외 (ExcelWriter 초기화 실패 등)
+        # → 빈 워크북 하나 만들어서 에러 메시지 기록 후 반환
+        import traceback
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws_err = wb.active
+        ws_err.title = "오류"
+        ws_err["A1"] = "Excel 생성 중 오류 발생"
+        ws_err["A2"] = str(_wb_err)
+        ws_err["A3"] = traceback.format_exc()
+        err_out = BytesIO()
+        wb.save(err_out)
+        return err_out.getvalue()
+    finally:
+        progress.empty()   # 진행바 항상 제거
 
     return output.getvalue()
 
@@ -1333,23 +1357,29 @@ if submitted and query.strip():
 
     try:
         excel_bytes = build_excel(corp_code, corp_name, stock_code, years, reprt_code)
+        # session_state에 보존 — download_button 클릭 시 Streamlit rerun에서도 유효
+        st.session_state["_excel_bytes"]    = excel_bytes
+        st.session_state["_excel_filename"] = f"{corp_name}_재무제표_{years[0]}-{years[-1]}.xlsx"
+        st.session_state["_excel_meta"]     = (year_range, num_years, report_type.split()[0])
     except Exception as _build_err:
         st.error(f"Excel 생성 오류: {_build_err}")
         st.exception(_build_err)
-        excel_bytes = None
+        st.session_state.pop("_excel_bytes", None)
 
+    excel_bytes = st.session_state.get("_excel_bytes")
     if excel_bytes:
-        fs_div_used = "CFS"  # build_excel 내부에서 결정되므로 표시는 생략
+        _yr_range, _n_yr, _rtype = st.session_state.get("_excel_meta", (year_range, num_years, report_type.split()[0]))
         c1, c2, c3 = st.columns(3)
-        c1.metric("수집 연도", year_range)
-        c2.metric("연수", f"{num_years}개년")
-        c3.metric("보고서", report_type.split()[0])
+        c1.metric("수집 연도", _yr_range)
+        c2.metric("연수", f"{_n_yr}개년")
+        c3.metric("보고서", _rtype)
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.download_button(
             label="엑셀 다운로드  (.xlsx)",
             data=excel_bytes,
-            file_name=f"{corp_name}_재무제표_{years[0]}-{years[-1]}.xlsx",
+            file_name=st.session_state.get("_excel_filename",
+                      f"{corp_name}_재무제표_{years[0]}-{years[-1]}.xlsx"),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
