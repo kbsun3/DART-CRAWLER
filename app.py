@@ -913,7 +913,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
             ws.row_dimensions[r].height = height
 
     # 헤더 (타이틀 행)
-    _gw(R["title"], "📋 파란 셀 3개만 직접 입력",
+    _gw(R["title"], "[입력 가이드]  파란 셀 3개만 직접 입력",
         fill=_GF_HDR, font=_GT_HDR)
 
     # ① D&A — 입력 행(row 11) 바로 옆
