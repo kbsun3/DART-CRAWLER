@@ -393,7 +393,8 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
 
 def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
                  year_cols: list,
-                 nm_fallbacks: list | None = None) -> tuple[dict, dict]:
+                 nm_fallbacks: list | None = None,
+                 sj_div_fallback: str | None = None) -> tuple[dict, dict]:
     """raw에서 특정 XBRL 패턴의 계정을 연도별로 추출.
     Returns: (values_dict, display_nm_dict)
       values_dict    : {yr: value_or_None}
@@ -402,8 +403,14 @@ def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
     Fallback 순서:
       1) 당해 연도 행의 thstrm_amount (account_id 패턴 → account_nm 패턴)
       2) 다음 연도 행의 frmtrm_amount (동일 패턴 순서) ← 전기 비교컬럼 역이용
+      3) sj_div_fallback 시트 동일 패턴 (e.g. IS 없으면 CIS 시도)
     """
-    sub = raw[raw["sj_div"] == sj_div]
+    # sj_div_fallback: 일부 회사는 IS 없이 CIS만 사용 (포괄손익만 제출)
+    divs_to_try = [sj_div]
+    if sj_div_fallback:
+        divs_to_try.append(sj_div_fallback)
+    sub = raw[raw["sj_div"].isin(divs_to_try)]
+
     result:   dict = {yr: None for yr in year_cols}
     found_dnm: dict = {yr: None for yr in year_cols}
 
@@ -424,7 +431,7 @@ def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
         if nm_fallbacks and "account_nm" in rows.columns:
             for nm_pat in nm_fallbacks:
                 m = rows[rows["account_nm"].str.contains(nm_pat, na=False, regex=False)]
-                m = m[~m["account_nm"].str.contains("합계|총계", na=False)]
+                m = m[~m["account_nm"].str.contains("합계|총계|원가|비용|채권|채무|재고", na=False)]
                 if not m.empty:
                     v = m.iloc[0].get(amount_col)
                     if v is not None and not pd.isna(v):
@@ -554,11 +561,22 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         ws.row_dimensions[r].height = 8
 
     # ── 데이터 추출 ──────────────────────────────────────────────────────────
-    rev,  rev_dnm  = _cfo_extract(raw, "IS", ["Revenue", "RevenueFromContracts"], year_cols)
+    rev,  rev_dnm  = _cfo_extract(raw, "IS",
+                                  ["Revenue", "RevenueFromContracts",
+                                   "RevenueFromContractsWithCustomers"],
+                                  year_cols,
+                                  nm_fallbacks=["매출액", "영업수익"],
+                                  sj_div_fallback="CIS")
     ebit, ebit_dnm = _cfo_extract(raw, "IS",
                                   ["ProfitLossFromOperatingActivities", "OperatingIncomeLoss"],
-                                  year_cols)
-    cogs, _        = _cfo_extract(raw, "IS", ["CostOfSales", "CostOfGoodsSold"], year_cols)
+                                  year_cols,
+                                  nm_fallbacks=["영업이익", "영업손익"],
+                                  sj_div_fallback="CIS")
+    cogs, _        = _cfo_extract(raw, "IS",
+                                  ["CostOfSales", "CostOfGoodsSold"],
+                                  year_cols,
+                                  nm_fallbacks=["매출원가"],
+                                  sj_div_fallback="CIS")
     ar,   ar_dnm   = _cfo_extract(raw, "BS",
                                   ["TradeAndOtherCurrentReceivables", "TradeReceivables",
                                    "TradeAndOtherReceivables", "CurrentTradeReceivables",
@@ -581,12 +599,23 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         return [d.get(yr) for yr in year_cols]
 
     # ── FS 시트 참조 수식 헬퍼 ────────────────────────────────────────────────
-    def _ref_vals_simple(values: dict, found_dnm: dict, fs_code: str) -> list:
-        """FS 시트 셀 참조 수식. 없으면 값 직접 기입."""
+    def _ref_vals_simple(values: dict, found_dnm: dict, fs_code: str,
+                         fs_code_fallback: str | None = None) -> list:
+        """FS 시트 셀 참조 수식. 없으면 값 직접 기입.
+        fs_code_fallback: 첫 번째 fs_code에서 행을 못 찾으면 fallback 시트도 시도.
+        """
+        dnm = next((v for v in found_dnm.values() if v is not None), None)
+        # 주 시트에서 행 탐색
         row_map  = (fs_row_maps   or {}).get(fs_code, {})
         sheet_nm = (fs_sheet_names or {}).get(fs_code, "")
-        dnm = next((v for v in found_dnm.values() if v is not None), None)
         row = row_map.get(dnm) if (dnm and row_map) else None
+        # fallback 시트 탐색 (e.g. IS 못 찾으면 CIS)
+        if row is None and fs_code_fallback:
+            fb_map  = (fs_row_maps   or {}).get(fs_code_fallback, {})
+            fb_nm   = (fs_sheet_names or {}).get(fs_code_fallback, "")
+            fb_row  = fb_map.get(dnm) if (dnm and fb_map) else None
+            if fb_row:
+                row, sheet_nm = fb_row, fb_nm
         result = []
         for j, yr in enumerate(year_cols):
             if row and sheet_nm:
@@ -688,7 +717,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
     # ── Revenue ──────────────────────────────────────────────────────────────
     _row(R["rev"], "Revenue", font=_FT_BOLD,
-         vals=_ref_vals_simple(rev, rev_dnm, "IS"))
+         vals=_ref_vals_simple(rev, rev_dnm, "IS", fs_code_fallback="CIS"))
     # Growth % — 첫 열: frmtrm 기반 Python 계산, 이후 열은 수식
     _w(R["growth"], CB, "  Growth %", _F_WHITE, _FT_GREY_ITA, _AL_L)
     # 첫 연도 growth: rev[prior_yr] (frmtrm) 사용
@@ -709,7 +738,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
     # ── EBIT / D&A / EBITDA ──────────────────────────────────────────────────
     _row(R["ebit"], "Operating Profit (EBIT)", font=_FT_BOLD,
-         vals=_ref_vals_simple(ebit, ebit_dnm, "IS"), border_bot=_S_THIN)
+         vals=_ref_vals_simple(ebit, ebit_dnm, "IS", fs_code_fallback="CIS"), border_bot=_S_THIN)
     # D&A — 수동 입력 (파란색 빈 셀)
     _w(R["da"], CB, "  (+) D&A", _F_WHITE, _FT_ITALIC, _AL_L)
     for j in range(NC):
