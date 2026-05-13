@@ -1056,7 +1056,7 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         raw[cols_keep].rename(columns={
             "year": "연도", "sj_div": "재무제표구분코드", "sj_nm": "재무제표명",
             "account_id": "계정ID", "account_nm": "계정명",
-            "thstrm_amount": "금액(원)", "fs_div_used": "연결/별도",
+            "thstrm_amount": "금액(억원)", "fs_div_used": "연결/별도",
         }).to_excel(writer, sheet_name="원본데이터", index=False)
 
         # 재무제표별 스타일 시트
