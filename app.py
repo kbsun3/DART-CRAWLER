@@ -439,6 +439,17 @@ def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
             if v is not None:
                 result[yr], found_dnm[yr] = v, dnm
 
+    # ── 첫 연도 이전(n-1) 잔액 추출 ─────────────────────────────────────────
+    # year_cols[0]의 frmtrm_amount = year_cols[0]-1 잔액
+    # → NWC 첫 연도 증감 계산용 (출력 열 없이 내부 계산에만 사용)
+    if year_cols:
+        first_yr = year_cols[0]
+        prior_yr = first_yr - 1
+        if prior_yr not in result:
+            v, _ = _search(sub[sub["year"] == first_yr], "frmtrm_amount")
+            if v is not None:
+                result[prior_yr] = v
+
     return result, found_dnm
 
 
@@ -582,15 +593,30 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                 result.append(values.get(yr))
         return result
 
-    def _nwc_mv_formulas(bal_row: int, outflow: bool) -> list:
+    # ── 첫 연도 증감 (n-1년 잔액 from frmtrm) ───────────────────────────────
+    prior_yr = year_cols[0] - 1 if year_cols else None
+
+    def _first_mv(bal: dict, outflow: bool):
+        """첫 연도의 NWC 증감 = thstrm - frmtrm (n-1 잔액 활용)."""
+        if not year_cols:
+            return None
+        cur = bal.get(year_cols[0])
+        prv = bal.get(prior_yr)
+        if cur is None or prv is None:
+            return None
+        return -(cur - prv) if outflow else (cur - prv)
+
+    def _nwc_mv_formulas(bal_row: int, outflow: bool, first_val=None) -> list:
         """NWC Movement: 같은 시트 내 잔액 행을 참조하는 수식 리스트.
+        j=0 → first_val (Python 계산, frmtrm 활용)
+        j>0 → 인시트 수식 (cur_col - prv_col)
         outflow=True  → 증가가 현금유출 (매출채권·재고): -(cur-prv)
         outflow=False → 증가가 현금유입 (매입채무):       cur-prv
         """
         result = []
         for j in range(len(year_cols)):
             if j == 0:
-                result.append(None)
+                result.append(first_val)   # hardcoded value or None
             else:
                 c  = get_column_letter(CB + 1 + j)
                 pc = get_column_letter(CB + j)
@@ -693,13 +719,14 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         _w(R["nwc_hdr"], c, fill=_F_YELLOW)
     ws.row_dimensions[R["nwc_hdr"]].height = 17
 
-    # NWC Movement: NWC Balance 행(하단 CCC 섹션)을 참조하는 인시트 수식
+    # NWC Movement: 첫 연도는 frmtrm 기반 Python 계산값, 이후는 인시트 수식
     _row(R["ar_chg"],  "  매출채권 증감 (증가시 -)", font=_FT_NORM,
-         vals=_nwc_mv_formulas(R["ar_bal"],  outflow=True))
+         vals=_nwc_mv_formulas(R["ar_bal"],  outflow=True,  first_val=_first_mv(ar,  True)))
     _row(R["inv_chg"], "  재고자산 증감 (증가시 -)", font=_FT_NORM,
-         vals=_nwc_mv_formulas(R["inv_bal"], outflow=True))
+         vals=_nwc_mv_formulas(R["inv_bal"], outflow=True,  first_val=_first_mv(inv, True)))
     _row(R["ap_chg"],  "  매입채무 증감 (증가시 +)", font=_FT_NORM,
-         vals=_nwc_mv_formulas(R["ap_bal"],  outflow=False), border_bot=_S_THIN)
+         vals=_nwc_mv_formulas(R["ap_bal"],  outflow=False, first_val=_first_mv(ap,  False)),
+         border_bot=_S_THIN)
     _formula_row(R["nwc_tot"], "Total NWC Movement",
                  f"=IF(AND({{c}}{R['ar_chg']}=\"\",{{c}}{R['inv_chg']}=\"\",{{c}}{R['ap_chg']}=\"\"),\"\","
                  f"IF({{c}}{R['ar_chg']}=\"\",0,{{c}}{R['ar_chg']})"
