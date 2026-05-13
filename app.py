@@ -1,7 +1,6 @@
 import os
 import time
 import zipfile
-import io
 import json
 import xml.etree.ElementTree as ET
 import datetime
@@ -137,6 +136,7 @@ _FT_GREY_NRM = Font(name="맑은 고딕",               color="7F7F7F", size=11)
 _FT_GREY_BLD = Font(name="맑은 고딕", bold=True,    color="7F7F7F", size=11)  # 카테고리 라벨
 _FT_GREY_ITA = Font(name="맑은 고딕", italic=True,  color="7F7F7F", size=11)  # % 보조지표
 _FT_BLUE     = Font(name="맑은 고딕",               color="0000FF", size=11)  # 수동입력 강조
+_FT_HIDDEN   = Font(color="FFFFFF")                                          # 숨김 행 (흰색 폰트)
 
 # 정렬
 _AL_C  = Alignment(horizontal="center", vertical="center")
@@ -161,14 +161,6 @@ _HL3_ELS = {    # Level 3: 합계/총계 → 초록 배경 + 굵게
     # CF
     "CashAndCashEquivalentsAtEndOfPeriodCf",
 }
-_HL2_ELS = {    # Level 2: 중분류/소계 → 흰색 + 굵게, indent 1
-    # BS는 _hl_level 내에서 sj_div=="BS" 분기로 처리 → 여기선 제외
-    # IS는 _hl_level 내에서 sj_div=="IS" 분기로 처리 → 여기선 제외
-    # CIS
-    "OtherComprehensiveIncome",
-    # CF는 _hl_level 내에서 sj_div=="CF" 분기로 처리 → 여기선 제외
-}
-
 _CF_ACTIVITY_ELS = {   # CF 3대 활동 소계 → Level 1 (노란색 굵게)
     "CashFlowsFromUsedInOperatingActivities",
     "CashFlowsFromUsedInInvestingActivities",
@@ -507,59 +499,52 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         if border: cell.border = border
         return cell
 
+    def _make_border(top, bot):
+        """top/bot Side 조합으로 Border 객체 반환. 둘 다 None이면 None."""
+        if top and bot:
+            return Border(top=top, bottom=bot)
+        if top:
+            return Border(top=top)
+        if bot:
+            return Border(bottom=bot)
+        return None
+
+    def _apply_label_border(r, top, bot):
+        """label 열(CB)에 top/bot 테두리 적용."""
+        if top or bot:
+            ws.cell(row=r, column=CB).border = Border(
+                top=top if top else _S_NONE,
+                bottom=bot if bot else _S_NONE,
+            )
+
     def _row(r, label, fill=_F_WHITE, font=_FT_NORM,
              vals=None, val_font=None, val_fill=None, fmt=_NUM_FMT,
              border_top=None, border_bot=None):
         """행 전체 작성 헬퍼."""
         _w(r, CB, label, fill, font, _AL_L)
-        vf = val_font or font
+        vf  = val_font or font
         vfl = val_fill or fill
-        top_bdr = Border(top=border_top) if border_top else None
-        bot_bdr = Border(bottom=border_bot) if border_bot else None
+        bdr = _make_border(border_top, border_bot)
         for j in range(NC):
             v = vals[j] if vals else None
-            bdr = None
-            if border_top and border_bot:
-                bdr = Border(top=border_top, bottom=border_bot)
-            elif border_top:
-                bdr = Border(top=border_top)
-            elif border_bot:
-                bdr = Border(bottom=border_bot)
             c = CB + 1 + j
             if v is None:
                 _w(r, c, None, vfl, _FT_GREY, _AL_R, fmt, bdr)
             else:
                 _w(r, c, v, vfl, vf, _AL_R, fmt, bdr)
-        # label 셀 테두리
-        if border_top or border_bot:
-            lbdr = Border(
-                top=border_top if border_top else _S_NONE,
-                bottom=border_bot if border_bot else _S_NONE,
-            )
-            ws.cell(row=r, column=CB).border = lbdr
+        _apply_label_border(r, border_top, border_bot)
         ws.row_dimensions[r].height = 17
 
     def _formula_row(r, label, formula_tpl, fill=_F_WHITE, font=_FT_NORM,
                      fmt=_NUM_FMT, border_top=None, border_bot=None):
         """수식 행 작성 — formula_tpl에서 {c} 를 열 문자로 치환."""
         _w(r, CB, label, fill, font, _AL_L)
+        bdr = _make_border(border_top, border_bot)
         for j in range(NC):
             c_ltr = col(j)
             formula = formula_tpl.format(c=c_ltr)
-            bdr = None
-            if border_top and border_bot:
-                bdr = Border(top=border_top, bottom=border_bot)
-            elif border_top:
-                bdr = Border(top=border_top)
-            elif border_bot:
-                bdr = Border(bottom=border_bot)
             _w(r, CB + 1 + j, formula, fill, font, _AL_R, fmt, bdr)
-        if border_top or border_bot:
-            lbdr = Border(
-                top=border_top if border_top else _S_NONE,
-                bottom=border_bot if border_bot else _S_NONE,
-            )
-            ws.cell(row=r, column=CB).border = lbdr
+        _apply_label_border(r, border_top, border_bot)
         ws.row_dimensions[r].height = 17
 
     def _blank(r):
@@ -630,17 +615,20 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
         result = []
         for yr in year_cols:
-            if resolved:
+            py_val = values.get(yr)
+            if py_val is not None:
+                # Python 추출값 우선 — FS 수식 참조보다 신뢰성 높음
+                result.append(py_val)
+            elif resolved:
                 sheet_nm, row, fs_yrs = resolved
                 if yr in fs_yrs:
-                    # FS 시트의 실제 컬럼 위치 사용 (CFO 컬럼 순서와 독립)
+                    # Python 값 없을 때만 FS 시트 수식 참조 (fallback)
                     c = get_column_letter(CB + 1 + fs_yrs.index(yr))
                     result.append(f"=IF('{sheet_nm}'!{c}{row}=\"\",\"\",'{sheet_nm}'!{c}{row})")
                 else:
-                    # 해당 연도가 FS 시트에 없으면 직접 값 기입
-                    result.append(values.get(yr))
+                    result.append(None)
             else:
-                result.append(values.get(yr))
+                result.append(None)
         return result
 
     prior_yr = year_cols[0] - 1 if year_cols else None
@@ -709,6 +697,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         "ar_bal_prior":  47,
         "inv_bal_prior": 48,
         "ap_bal_prior":  49,
+        "cogs_hidden":   50,  # COGS 숨김 행 (DIO/DPO 수식 참조용)
     }
 
     # ── 타이틀 ───────────────────────────────────────────────────────────────
@@ -738,11 +727,10 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     _blank(R["blank2"])
 
     # ── N-1 Revenue 숨김 행 (Growth % 첫 연도 수식 참조용) ──────────────────
-    _hidden_font_rev = Font(color="FFFFFF")
     _rev_prior_val = rev.get(prior_yr)
-    _row(R["rev_prior"], "", fill=_F_WHITE, font=_hidden_font_rev,
+    _row(R["rev_prior"], "", fill=_F_WHITE, font=_FT_HIDDEN,
          vals=[_rev_prior_val] + [None] * (NC - 1),
-         val_font=_hidden_font_rev)
+         val_font=_FT_HIDDEN)
     ws.row_dimensions[R["rev_prior"]].height = 0
 
     # ── Revenue ──────────────────────────────────────────────────────────────
@@ -789,12 +777,11 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
     # ── N-1 잔액 숨김 행 (NWC Movement 첫 연도 수식 참조용) ──────────────────
     # prior_yr 잔액을 첫 번째 데이터 열(CB+1)에만 기록. 나머지 열은 비워둠.
-    _hidden_font = Font(color="FFFFFF")
     for _r_key, _bal in [("ar_bal_prior", ar), ("inv_bal_prior", inv), ("ap_bal_prior", ap)]:
         _pv = _bal.get(prior_yr)
         _vals = [_pv] + [None] * (NC - 1)
-        _row(R[_r_key], "", fill=_F_WHITE, font=_hidden_font,
-             vals=_vals, val_font=_hidden_font)
+        _row(R[_r_key], "", fill=_F_WHITE, font=_FT_HIDDEN,
+             vals=_vals, val_font=_FT_HIDDEN)
         ws.row_dimensions[R[_r_key]].height = 0   # 완전 숨김
 
     # NWC Movement: 모든 연도를 인시트 Excel 수식으로 통일
@@ -841,7 +828,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     ws.row_dimensions[R["capex_exp"]].height   = 17
 
     _formula_row(R["capex_pct"], "  CAPEX % of Revenue",
-                 f"=IF({{c}}{R['rev']}<>0,IF({{c}}{R['capex_tot']}=\"\",\"\",{{c}}{R['capex_tot']}/{{c}}{R['rev']}),\"\")",
+                 f"=IF(AND({{c}}{R['rev']}<>\"\",{{c}}{R['rev']}<>0),IF({{c}}{R['capex_tot']}=\"\",\"\",{{c}}{R['capex_tot']}/{{c}}{R['rev']}),\"\")",
                  font=_FT_GREY_ITA, fmt=PCT_FMT, border_bot=_S_THIN)
     _blank(R["blank6"])
 
@@ -883,11 +870,11 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     denom_row = R["rev"]   # fallback
 
     if has_cogs:
-        # cogs를 별도 숨김 행에 기록 (DSO/DIO/DPO 수식 참조용)
+        # cogs를 별도 숨김 행에 기록 (DIO/DPO 수식 참조용)
         # 레이블·폰트 모두 흰색으로 완전 은폐
-        cogs_row = R["ccc"] + 2
-        _row(cogs_row, "", fill=_F_WHITE, font=Font(color="FFFFFF"), vals=cogs_vals,
-             val_font=Font(color="FFFFFF"))
+        cogs_row = R["cogs_hidden"]  # row 50 — rev_prior(46)~ap_bal_prior(49)와 충돌 방지
+        _row(cogs_row, "", fill=_F_WHITE, font=_FT_HIDDEN, vals=cogs_vals,
+             val_font=_FT_HIDDEN)
         ws.row_dimensions[cogs_row].height = 0  # 행 높이 0 (완전 숨김)
         denom_row = cogs_row
 
@@ -928,7 +915,7 @@ def load_corp_codes() -> pd.DataFrame:
     # 2순위: DART API 직접 호출 (로컬 실행 또는 파일 없을 때)
     r = requests.get(f"{BASE_URL}/corpCode.xml", params={"crtfc_key": API_KEY}, timeout=30)
     r.raise_for_status()
-    z = zipfile.ZipFile(io.BytesIO(r.content))
+    z = zipfile.ZipFile(BytesIO(r.content))
     root = ET.fromstring(z.read("CORPCODE.xml"))
     rows = [
         {
