@@ -689,9 +689,17 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     # ── Revenue ──────────────────────────────────────────────────────────────
     _row(R["rev"], "Revenue", font=_FT_BOLD,
          vals=_ref_vals_simple(rev, rev_dnm, "IS"))
-    # Growth % — 첫 열은 이전 연도 없으므로 공백, 이후 열은 수식
+    # Growth % — 첫 열: frmtrm 기반 Python 계산, 이후 열은 수식
     _w(R["growth"], CB, "  Growth %", _F_WHITE, _FT_GREY_ITA, _AL_L)
-    _w(R["growth"], CB + 1, None, _F_WHITE, _FT_GREY_ITA, _AL_R, PCT_FMT)
+    # 첫 연도 growth: rev[prior_yr] (frmtrm) 사용
+    _first_rev_cur = rev.get(year_cols[0]) if year_cols else None
+    _first_rev_prv = rev.get(prior_yr) if prior_yr else None
+    _first_growth  = (
+        (_first_rev_cur / _first_rev_prv - 1)
+        if (_first_rev_cur and _first_rev_prv and _first_rev_prv != 0)
+        else None
+    )
+    _w(R["growth"], CB + 1, _first_growth, _F_WHITE, _FT_GREY_ITA, _AL_R, PCT_FMT)
     for j in range(1, NC):
         c_ltr = col(j)
         prev_c = col(j - 1)
