@@ -223,10 +223,14 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
         if not account_id or "표준계정코드 미사용" in account_id:
             return 0
         el = account_id.rsplit("_", 1)[-1]
-        if el == "ComprehensiveIncome":
+        if el in {"ComprehensiveIncome"}:
             return 3  # 총포괄이익 → 초록
+        if el in {"Revenue", "RevenueFromContractsWithCustomers"}:
+            return 3  # 매출액 → 초록 (IS와 동일)
+        if el in {"ProfitLossFromOperatingActivities", "OperatingIncomeLoss"}:
+            return 1  # 영업이익 → 노란색 (IS와 동일)
         if el == "ProfitLoss":
-            return 1  # 당기순이익 → 노란색 (IS와 통일)
+            return 1  # 당기순이익 → 노란색
         if el == "OtherComprehensiveIncome":
             return 2  # 기타포괄손익 → 볼드
         return 0
