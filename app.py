@@ -732,7 +732,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     for j in range(1, NC):
         c_ltr = col(j)
         prev_c = col(j - 1)
-        formula = f"=IF({prev_c}{R['rev']}<>0,{c_ltr}{R['rev']}/{prev_c}{R['rev']}-1,\"\")"
+        formula = f"=IF(AND({prev_c}{R['rev']}<>\"\",{prev_c}{R['rev']}<>0),{c_ltr}{R['rev']}/{prev_c}{R['rev']}-1,\"\")"
         _w(R["growth"], CB + 1 + j, formula, _F_WHITE, _FT_GREY_ITA, _AL_R, PCT_FMT)
     ws.row_dimensions[R["growth"]].height = 17
 
@@ -749,7 +749,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                  f"=IF({{c}}{R['ebit']}=\"\",\"\",{{c}}{R['ebit']}+IF({{c}}{R['da']}=\"\",0,{{c}}{R['da']}))",
                  font=_FT_BOLD, border_top=_S_THIN)
     _formula_row(R["ebitda_pct"], "  EBITDA %",
-                 f"=IF({{c}}{R['rev']}<>0,{{c}}{R['ebitda']}/{{c}}{R['rev']},\"\")",
+                 f"=IF(AND({{c}}{R['rev']}<>\"\",{{c}}{R['rev']}<>0),{{c}}{R['ebitda']}/{{c}}{R['rev']},\"\")",
                  font=_FT_GREY_ITA, fmt=PCT_FMT)
     _blank(R["blank3"])
 
@@ -781,7 +781,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                  fill=_F_GREEN, font=_FT_BOLD,
                  border_top=_S_THIN, border_bot=_S_THIN)
     _formula_row(R["conv_pct"], "  Conversion % (post NWC / EBITDA)",
-                 f"=IF({{c}}{R['ebitda']}<>0,{{c}}{R['ebitda_nwc']}/{{c}}{R['ebitda']},\"\")",
+                 f"=IF(AND({{c}}{R['ebitda']}<>\"\",{{c}}{R['ebitda']}<>0),{{c}}{R['ebitda_nwc']}/{{c}}{R['ebitda']},\"\")",
                  font=_FT_GREY_ITA, fmt=PCT_FMT)
     _blank(R["blank5"])
 
@@ -812,7 +812,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                  fill=_F_DK_GREEN, font=_FT_BOLD,
                  border_top=_S_THICK, border_bot=_S_DOUBLE)
     _formula_row(R["cash_conv"], "  Cash Conversion % (FCF / EBITDA)",
-                 f"=IF({{c}}{R['ebitda']}<>0,{{c}}{R['fcf']}/{{c}}{R['ebitda']},\"\")",
+                 f"=IF(AND({{c}}{R['ebitda']}<>\"\",{{c}}{R['ebitda']}<>0),{{c}}{R['fcf']}/{{c}}{R['ebitda']},\"\")",
                  font=_FT_GREY_ITA, fmt=PCT_FMT)
     _blank(R["blank7"])
 
@@ -851,13 +851,13 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         denom_row = cogs_row
 
     _formula_row(R["dso"], "  DSO (매출채권 회수일수)",
-                 f"=IF({{c}}{R['rev']}<>0,{{c}}{R['ar_bal']}/{{c}}{R['rev']}*365,\"\")",
+                 f"=IF(AND({{c}}{R['rev']}<>\"\",{{c}}{R['rev']}<>0),{{c}}{R['ar_bal']}/{{c}}{R['rev']}*365,\"\")",
                  font=_FT_NORM, fmt="0.0")
     _formula_row(R["dio"], "  DIO (재고 회전일수)",
-                 f"=IF({{c}}{denom_row}<>0,{{c}}{R['inv_bal']}/{{c}}{denom_row}*365,\"\")",
+                 f"=IF(AND({{c}}{denom_row}<>\"\",{{c}}{denom_row}<>0),{{c}}{R['inv_bal']}/{{c}}{denom_row}*365,\"\")",
                  font=_FT_NORM, fmt="0.0")
     _formula_row(R["dpo"], "  DPO (매입채무 지급일수)",
-                 f"=IF({{c}}{denom_row}<>0,{{c}}{R['ap_bal']}/{{c}}{denom_row}*365,\"\")",
+                 f"=IF(AND({{c}}{denom_row}<>\"\",{{c}}{denom_row}<>0),{{c}}{R['ap_bal']}/{{c}}{denom_row}*365,\"\")",
                  font=_FT_NORM, fmt="0.0", border_bot=_S_THIN)
     _blank(R["blank9"])
     _formula_row(R["ccc"], "CCC (DSO + DIO - DPO)",
