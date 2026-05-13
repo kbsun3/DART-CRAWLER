@@ -1445,7 +1445,9 @@ with st.form("main_form"):
     submitted = st.form_submit_button("검색 및 수집", use_container_width=True, type="primary")
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 결과
+# ── 검색 & Excel 생성 ────────────────────────────────────────────────────────
+# 폼 제출 시에만 Excel을 빌드하고 session_state에 저장.
+# 다운로드 버튼은 아래 별도 섹션에서 항상 렌더링 — rerun 시에도 유지됨.
 if submitted and query.strip():
     results = search_company(query.strip(), corp_df)
 
@@ -1481,7 +1483,6 @@ if submitted and query.strip():
 
     try:
         excel_bytes = build_excel(corp_code, corp_name, stock_code, years, reprt_code)
-        # session_state에 보존 — download_button 클릭 시 Streamlit rerun에서도 유효
         st.session_state["_excel_bytes"]    = excel_bytes
         st.session_state["_excel_filename"] = f"{corp_name}_재무제표_{years[0]}-{years[-1]}.xlsx"
         st.session_state["_excel_meta"]     = (year_range, num_years, report_type.split()[0])
@@ -1490,23 +1491,27 @@ if submitted and query.strip():
         st.exception(_build_err)
         st.session_state.pop("_excel_bytes", None)
 
-    excel_bytes = st.session_state.get("_excel_bytes")
-    if excel_bytes:
-        _yr_range, _n_yr, _rtype = st.session_state.get("_excel_meta", (year_range, num_years, report_type.split()[0]))
-        c1, c2, c3 = st.columns(3)
-        c1.metric("수집 연도", _yr_range)
-        c2.metric("연수", f"{_n_yr}개년")
-        c3.metric("보고서", _rtype)
-
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.download_button(
-            label="엑셀 다운로드  (.xlsx)",
-            data=excel_bytes,
-            file_name=st.session_state.get("_excel_filename",
-                      f"{corp_name}_재무제표_{years[0]}-{years[-1]}.xlsx"),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
 elif submitted:
     st.warning("회사명 또는 종목코드를 입력해주세요.")
+
+# ── 다운로드 버튼 (if submitted 바깥 — rerun 후에도 항상 렌더링) ─────────────
+# 다운로드 버튼 클릭 시 Streamlit이 rerun하면 submitted=False가 되므로,
+# session_state 확인을 if submitted 밖에서 독립적으로 수행해야 파일이 서빙됨.
+_dl_bytes = st.session_state.get("_excel_bytes")
+if _dl_bytes:
+    _yr_range, _n_yr, _rtype = st.session_state.get(
+        "_excel_meta", ("–", "–", "–")
+    )
+    c1, c2, c3 = st.columns(3)
+    c1.metric("수집 연도", _yr_range)
+    c2.metric("연수", f"{_n_yr}개년")
+    c3.metric("보고서", _rtype)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.download_button(
+        label="엑셀 다운로드  (.xlsx)",
+        data=_dl_bytes,
+        file_name=st.session_state.get("_excel_filename", "재무제표.xlsx"),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
