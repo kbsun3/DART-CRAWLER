@@ -261,8 +261,10 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
 def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
                     corp_name: str, fs_name: str,
                     years: list[int], period_map: dict,
-                    fs_code: str = "") -> None:
-    """재무제표 시트 작성 — 디자인 사양 준수."""
+                    fs_code: str = "") -> dict:
+    """재무제표 시트 작성 — 디자인 사양 준수.
+    Returns: {display_nm: excel_row}  ← Cash Flow Overview 참조 수식 생성용
+    """
     year_cols = [c for c in pivot.columns if isinstance(c, int)]
     n_yr = len(year_cols)
     CB   = 2   # B열 = column index 2
@@ -321,10 +323,12 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
     # ── 8행~: 데이터 (1패스: 셀 작성 + 레벨 기록) ────────────────────────
     DATA_START = 8
     row_levels: list[tuple[int, int]] = []  # (excel_row, level)
+    nm_to_row: dict[str, int] = {}          # display_nm → excel_row (CFO 참조용)
 
     for i, (_, row_s) in enumerate(pivot.iterrows()):
         er = DATA_START + i
         display_nm = row_s["계정명"]
+        nm_to_row[display_nm] = er
         account_id = id_map.get(display_nm, "")
         vals       = [row_s.get(yr) for yr in year_cols]
         has_vals   = any(v is not None and not pd.isna(v) for v in vals)
@@ -379,40 +383,60 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
         ws.column_dimensions[get_column_letter(CB + 1 + j)].width = 17
 
     ws.freeze_panes = f"{get_column_letter(CB + 1)}8"
+    return nm_to_row
 
 
 # ── Cash Flow Overview 분석 시트 ──────────────────────────────────────────────
 
 def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
-                 year_cols: list, nm_fallbacks: list | None = None) -> dict:
+                 year_cols: list,
+                 nm_fallbacks: list | None = None) -> tuple[dict, dict]:
     """raw에서 특정 XBRL 패턴의 계정을 연도별로 추출.
-    patterns: account_id 부분일치 목록 (우선순위 순)
-    nm_fallbacks: account_nm 부분일치 목록 (ID 매칭 실패 시 fallback)
+    Returns: (values_dict, display_nm_dict)
+      values_dict    : {yr: value_or_None}
+      display_nm_dict: {yr: display_nm_or_None}  ← FS 시트 참조 수식 생성용
+
+    Fallback 순서:
+      1) 당해 연도 행의 thstrm_amount (account_id 패턴 → account_nm 패턴)
+      2) 다음 연도 행의 frmtrm_amount (동일 패턴 순서) ← 전기 비교컬럼 역이용
     """
     sub = raw[raw["sj_div"] == sj_div]
-    result = {yr: None for yr in year_cols}
-    for yr in year_cols:
-        yr_rows = sub[sub["year"] == yr]
-        # 1차: account_id 패턴 매칭
+    result:   dict = {yr: None for yr in year_cols}
+    found_dnm: dict = {yr: None for yr in year_cols}
+
+    def _search(rows: pd.DataFrame, amount_col: str):
+        """rows에서 패턴 매칭 후 (value, display_nm) 반환, 없으면 (None, None)."""
+        # 1차: account_id 패턴
         for pat in patterns:
-            m = yr_rows[yr_rows["account_id"].str.contains(pat, na=False, regex=False)]
+            m = rows[rows["account_id"].str.contains(pat, na=False, regex=False)]
             if not m.empty:
-                v = m.iloc[0]["thstrm_amount"]
+                v = m.iloc[0][amount_col]
                 if v is not None and not pd.isna(v):
-                    result[yr] = v
-                    break
-        # 2차: account_nm 한국어 fallback (표준계정코드 미사용 기업 대응)
-        if result[yr] is None and nm_fallbacks and "account_nm" in yr_rows.columns:
+                    dnm = m.iloc[0]["display_nm"] if "display_nm" in m.columns else None
+                    return v, dnm
+        # 2차: account_nm 한국어 fallback
+        if nm_fallbacks and "account_nm" in rows.columns:
             for nm_pat in nm_fallbacks:
-                m = yr_rows[yr_rows["account_nm"].str.contains(nm_pat, na=False, regex=False)]
-                # 합계·총계 행은 제외 (account_nm에 '합계' 포함 시 스킵)
+                m = rows[rows["account_nm"].str.contains(nm_pat, na=False, regex=False)]
                 m = m[~m["account_nm"].str.contains("합계|총계", na=False)]
                 if not m.empty:
-                    v = m.iloc[0]["thstrm_amount"]
+                    v = m.iloc[0][amount_col]
                     if v is not None and not pd.isna(v):
-                        result[yr] = v
-                        break
-    return result
+                        dnm = m.iloc[0]["display_nm"] if "display_nm" in m.columns else None
+                        return v, dnm
+        return None, None
+
+    for i, yr in enumerate(year_cols):
+        # 1차: 당해 연도 thstrm
+        result[yr], found_dnm[yr] = _search(sub[sub["year"] == yr], "thstrm_amount")
+        # 2차: 다음 연도 frmtrm (전기 비교컬럼)
+        if result[yr] is None and i + 1 < len(year_cols):
+            nxt = year_cols[i + 1]
+            v, dnm = _search(sub[sub["year"] == nxt], "frmtrm_amount")
+            if v is not None:
+                result[yr], found_dnm[yr] = v, dnm
+
+    return result, found_dnm
 
 
 def _cfo_add(a: dict, b: dict, year_cols: list) -> dict:
@@ -428,8 +452,13 @@ def _cfo_add(a: dict, b: dict, year_cols: list) -> dict:
 
 
 def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
-                     year_cols: list, period_map: dict) -> None:
-    """Cash Flow Overview 분석 시트 작성."""
+                     year_cols: list, period_map: dict,
+                     fs_row_maps: dict | None = None,
+                     fs_sheet_names: dict | None = None) -> None:
+    """Cash Flow Overview 분석 시트 작성.
+    fs_row_maps   : {fs_code: {display_nm: excel_row}}  ← FS 시트 참조 수식용
+    fs_sheet_names: {fs_code: sheet_name_string}
+    """
 
     PCT_FMT = "0.0%;(0.0%);-"
     CB  = 2   # B열 (label)
@@ -508,54 +537,68 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         ws.row_dimensions[r].height = 8
 
     # ── 데이터 추출 ──────────────────────────────────────────────────────────
-    rev    = _cfo_extract(raw, "IS", ["Revenue", "RevenueFromContracts"], year_cols)
-    ebit   = _cfo_extract(raw, "IS",
-                          ["ProfitLossFromOperatingActivities", "OperatingIncomeLoss"],
-                          year_cols)
-    cogs   = _cfo_extract(raw, "IS", ["CostOfSales", "CostOfGoodsSold"], year_cols)
-    ar     = _cfo_extract(raw, "BS",
-                          ["TradeAndOtherCurrentReceivables", "TradeReceivables",
-                           "TradeAndOtherReceivables", "CurrentTradeReceivables",
-                           "AccountsAndNotesReceivableCurrent"],
-                          year_cols,
-                          nm_fallbacks=["매출채권"])
-    inv    = _cfo_extract(raw, "BS",
-                          ["Inventories", "CurrentInventories"],
-                          year_cols,
-                          nm_fallbacks=["재고자산"])
-    ap     = _cfo_extract(raw, "BS",
-                          ["TradeAndOtherCurrentPayables", "TradeAndOtherPayables",
-                           "TradePayables", "CurrentTradePayables"],
-                          year_cols,
-                          nm_fallbacks=["매입채무"])
-    ppe    = _cfo_extract(raw, "CF",
-                          ["PurchaseOfPropertyPlantAndEquipment"], year_cols)
-    intan  = _cfo_extract(raw, "CF",
-                          ["PurchaseOfIntangibleAssets"], year_cols)
-    capex  = _cfo_add(ppe, intan, year_cols)
-
-    # NWC 증감: 전기 대비 변화 (현금흐름 부호 기준)
-    def nwc_chg(bal: dict, sign: int) -> dict:
-        """sign=+1 → 증가가 현금유출(매출채권·재고), sign=-1 → 증가가 현금유입(매입채무)."""
-        result = {}
-        for i, yr in enumerate(year_cols):
-            if i == 0:
-                result[yr] = None
-            else:
-                prev = year_cols[i - 1]
-                cur_v, prv_v = bal.get(yr), bal.get(prev)
-                if cur_v is None or prv_v is None:
-                    result[yr] = None
-                else:
-                    result[yr] = -sign * (cur_v - prv_v)
-        return result
-
-    ar_chg  = nwc_chg(ar,  1)
-    inv_chg = nwc_chg(inv, 1)
-    ap_chg  = nwc_chg(ap, -1)
+    rev,  rev_dnm  = _cfo_extract(raw, "IS", ["Revenue", "RevenueFromContracts"], year_cols)
+    ebit, ebit_dnm = _cfo_extract(raw, "IS",
+                                  ["ProfitLossFromOperatingActivities", "OperatingIncomeLoss"],
+                                  year_cols)
+    cogs, _        = _cfo_extract(raw, "IS", ["CostOfSales", "CostOfGoodsSold"], year_cols)
+    ar,   ar_dnm   = _cfo_extract(raw, "BS",
+                                  ["TradeAndOtherCurrentReceivables", "TradeReceivables",
+                                   "TradeAndOtherReceivables", "CurrentTradeReceivables",
+                                   "AccountsAndNotesReceivableCurrent"],
+                                  year_cols, nm_fallbacks=["매출채권"])
+    inv,  inv_dnm  = _cfo_extract(raw, "BS",
+                                  ["Inventories", "CurrentInventories"],
+                                  year_cols, nm_fallbacks=["재고자산"])
+    ap,   ap_dnm   = _cfo_extract(raw, "BS",
+                                  ["TradeAndOtherCurrentPayables", "TradeAndOtherPayables",
+                                   "TradePayables", "CurrentTradePayables"],
+                                  year_cols, nm_fallbacks=["매입채무"])
+    ppe,  _        = _cfo_extract(raw, "CF",
+                                  ["PurchaseOfPropertyPlantAndEquipment"], year_cols)
+    intan, _       = _cfo_extract(raw, "CF",
+                                  ["PurchaseOfIntangibleAssets"], year_cols)
+    capex = _cfo_add(ppe, intan, year_cols)
 
     def yr_vals(d: dict) -> list:
         return [d.get(yr) for yr in year_cols]
+
+    # ── FS 시트 참조 수식 헬퍼 ────────────────────────────────────────────────
+    def _ref_vals_simple(values: dict, found_dnm: dict, fs_code: str) -> list:
+        """FS 시트 셀 참조 수식. 없으면 값 직접 기입."""
+        row_map  = (fs_row_maps   or {}).get(fs_code, {})
+        sheet_nm = (fs_sheet_names or {}).get(fs_code, "")
+        dnm = next((v for v in found_dnm.values() if v is not None), None)
+        row = row_map.get(dnm) if (dnm and row_map) else None
+        result = []
+        for j, yr in enumerate(year_cols):
+            if row and sheet_nm:
+                c = get_column_letter(CB + 1 + j)
+                result.append(f"=IF('{sheet_nm}'!{c}{row}=\"\",\"\",'{sheet_nm}'!{c}{row})")
+            else:
+                result.append(values.get(yr))
+        return result
+
+    def _nwc_mv_formulas(bal_row: int, outflow: bool) -> list:
+        """NWC Movement: 같은 시트 내 잔액 행을 참조하는 수식 리스트.
+        outflow=True  → 증가가 현금유출 (매출채권·재고): -(cur-prv)
+        outflow=False → 증가가 현금유입 (매입채무):       cur-prv
+        """
+        result = []
+        for j in range(len(year_cols)):
+            if j == 0:
+                result.append(None)
+            else:
+                c  = get_column_letter(CB + 1 + j)
+                pc = get_column_letter(CB + j)
+                if outflow:
+                    f = (f"=IF(OR({c}{bal_row}=\"\",{pc}{bal_row}=\"\"),\"\","
+                         f"-({c}{bal_row}-{pc}{bal_row}))")
+                else:
+                    f = (f"=IF(OR({c}{bal_row}=\"\",{pc}{bal_row}=\"\"),\"\","
+                         f"{c}{bal_row}-{pc}{bal_row})")
+                result.append(f)
+        return result
 
     # ── 행 번호 정의 ─────────────────────────────────────────────────────────
     R = {
@@ -612,7 +655,8 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     _blank(R["blank2"])
 
     # ── Revenue ──────────────────────────────────────────────────────────────
-    _row(R["rev"], "Revenue", font=_FT_BOLD, vals=yr_vals(rev))
+    _row(R["rev"], "Revenue", font=_FT_BOLD,
+         vals=_ref_vals_simple(rev, rev_dnm, "IS"))
     # Growth % — 첫 열은 이전 연도 없으므로 공백, 이후 열은 수식
     _w(R["growth"], CB, "  Growth %", _F_WHITE, _FT_GREY_ITA, _AL_L)
     _w(R["growth"], CB + 1, None, _F_WHITE, _FT_GREY_ITA, _AL_R, PCT_FMT)
@@ -625,7 +669,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
     # ── EBIT / D&A / EBITDA ──────────────────────────────────────────────────
     _row(R["ebit"], "Operating Profit (EBIT)", font=_FT_BOLD,
-         vals=yr_vals(ebit), border_bot=_S_THIN)
+         vals=_ref_vals_simple(ebit, ebit_dnm, "IS"), border_bot=_S_THIN)
     # D&A — 수동 입력 (파란색 빈 셀)
     _w(R["da"], CB, "  (+) D&A", _F_WHITE, _FT_ITALIC, _AL_L)
     for j in range(NC):
@@ -646,10 +690,13 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         _w(R["nwc_hdr"], c, fill=_F_YELLOW)
     ws.row_dimensions[R["nwc_hdr"]].height = 17
 
-    _row(R["ar_chg"],  "  매출채권 증감 (증가시 -)", font=_FT_NORM, vals=yr_vals(ar_chg))
-    _row(R["inv_chg"], "  재고자산 증감 (증가시 -)", font=_FT_NORM, vals=yr_vals(inv_chg))
+    # NWC Movement: NWC Balance 행(하단 CCC 섹션)을 참조하는 인시트 수식
+    _row(R["ar_chg"],  "  매출채권 증감 (증가시 -)", font=_FT_NORM,
+         vals=_nwc_mv_formulas(R["ar_bal"],  outflow=True))
+    _row(R["inv_chg"], "  재고자산 증감 (증가시 -)", font=_FT_NORM,
+         vals=_nwc_mv_formulas(R["inv_bal"], outflow=True))
     _row(R["ap_chg"],  "  매입채무 증감 (증가시 +)", font=_FT_NORM,
-         vals=yr_vals(ap_chg), border_bot=_S_THIN)
+         vals=_nwc_mv_formulas(R["ap_bal"],  outflow=False), border_bot=_S_THIN)
     _formula_row(R["nwc_tot"], "Total NWC Movement",
                  f"=IF(AND({{c}}{R['ar_chg']}=\"\",{{c}}{R['inv_chg']}=\"\",{{c}}{R['ap_chg']}=\"\"),\"\","
                  f"IF({{c}}{R['ar_chg']}=\"\",0,{{c}}{R['ar_chg']})"
@@ -709,9 +756,13 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     _w(R["nwc_bal_cat"], CB, "[NWC Balance]", _F_WHITE, _FT_GREY_BLD, _AL_L)
     ws.row_dimensions[R["nwc_bal_cat"]].height = 17
 
-    _row(R["ar_bal"],  "  매출채권", font=_FT_NORM, vals=yr_vals(ar))
-    _row(R["inv_bal"], "  재고자산", font=_FT_NORM, vals=yr_vals(inv))
-    _row(R["ap_bal"],  "  매입채무", font=_FT_NORM, vals=yr_vals(ap))
+    # NWC Balance: BS 시트 참조 수식 (가능 시) → NWC Movement가 이 셀들을 참조
+    _row(R["ar_bal"],  "  매출채권", font=_FT_NORM,
+         vals=_ref_vals_simple(ar,  ar_dnm,  "BS"))
+    _row(R["inv_bal"], "  재고자산", font=_FT_NORM,
+         vals=_ref_vals_simple(inv, inv_dnm, "BS"))
+    _row(R["ap_bal"],  "  매입채무", font=_FT_NORM,
+         vals=_ref_vals_simple(ap,  ap_dnm,  "BS"))
     _blank(R["blank8"])
 
     _w(R["ccc_cat"], CB, "[Cash Conversion Cycle (days)]", _F_WHITE, _FT_GREY_BLD, _AL_L)
@@ -931,6 +982,7 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         }).to_excel(writer, sheet_name="원본데이터", index=False)
 
         # 재무제표별 스타일 시트
+        fs_row_maps: dict[str, dict] = {}   # {fs_code: {display_nm: excel_row}}
         for fs_code, fs_name in FS_LABELS.items():
             subset = raw[raw["sj_div"] == fs_code].copy()
             if subset.empty:
@@ -997,13 +1049,16 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             sheet_name = fs_name[:31]
             writer.book.create_sheet(sheet_name)
             ws = writer.book[sheet_name]
-            _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
-                            year_cols, period_map, fs_code)
+            nm_to_row = _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
+                                        year_cols, period_map, fs_code)
+            fs_row_maps[fs_code] = nm_to_row
 
         # ── Cash Flow Overview 분석 시트 ──────────────────────────────────
         all_year_cols = sorted(raw["year"].unique().tolist())
         ws_cfo = writer.book.create_sheet("Cash Flow Overview")
-        _write_cfo_sheet(ws_cfo, raw, corp_name, all_year_cols, period_map)
+        _write_cfo_sheet(ws_cfo, raw, corp_name, all_year_cols, period_map,
+                         fs_row_maps=fs_row_maps,
+                         fs_sheet_names={k: v for k, v in FS_LABELS.items()})
 
     return output.getvalue()
 
