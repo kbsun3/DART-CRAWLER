@@ -893,6 +893,102 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                  fill=_F_GREEN, font=_FT_BOLD, fmt="0.0",
                  border_top=_S_THIN, border_bot=_S_DOUBLE)
 
+    # ── 입력 가이드 패널 (데이터 영역 우측) ──────────────────────────────────
+    # 파란색 입력 셀 3가지를 처음 보는 사용자도 쉽게 이해하도록 안내
+    GC = LAST + 2   # 가이드 시작 열 (데이터 마지막 열 + 여백 1)
+
+    _GF_HDR  = PatternFill("solid", fgColor="1F4E78")   # 진한 네이비
+    _GF_BODY = PatternFill("solid", fgColor="EFF6FF")   # 연한 파랑
+    _GF_TIP  = PatternFill("solid", fgColor="FFFBEA")   # 연한 노랑
+    _GF_SEC  = PatternFill("solid", fgColor="DBEAFE")   # 섹션 구분 파랑
+
+    _GT_HDR  = Font(name="맑은 고딕", bold=True,  color="FFFFFF", size=11)
+    _GT_ITEM = Font(name="맑은 고딕", bold=True,  color="1E40AF", size=10)
+    _GT_DESC = Font(name="맑은 고딕",              color="374151", size=10)
+    _GT_HINT = Font(name="맑은 고딕", italic=True, color="6B7280", size=9)
+    _GT_TIP  = Font(name="맑은 고딕", bold=True,  color="92400E", size=10)
+    _GT_AL   = Alignment(horizontal="left", vertical="center",
+                         wrap_text=True, indent=1)
+
+    def _gw(r, text, fill=_GF_BODY, font=_GT_DESC, height=None):
+        cell = ws.cell(row=r, column=GC, value=text)
+        cell.fill, cell.font, cell.alignment = fill, font, _GT_AL
+        if height:
+            ws.row_dimensions[r].height = height
+
+    # 헤더
+    _gw(R["title"],
+        "📋  입력 가이드",
+        fill=_GF_HDR, font=_GT_HDR)
+
+    # 부제 (unit 행)
+    _gw(R["unit"],
+        "파란색(🔵) 셀은 자동 수집이 불가능한 항목입니다. 직접 입력해 주세요.",
+        fill=_GF_BODY, font=_GT_HINT)
+
+    # 구분선 역할 빈 행
+    _gw(R["blank1"], "", fill=_GF_BODY)
+    _gw(R["hdr1"],  "직접 입력이 필요한 항목은 3가지입니다.",
+        fill=_GF_SEC, font=_GT_DESC)
+    _gw(R["hdr2"],  "아래 설명을 참고해 각 연도 값을 채워주세요.",
+        fill=_GF_SEC, font=_GT_HINT)
+    _gw(R["blank2"], "", fill=_GF_BODY)
+
+    # ① D&A ─────────────────────────────────────────────────────────────────
+    _gw(R["rev"],  "① D&A  (감가상각비 + 상각비 합계)",
+        fill=_GF_BODY, font=_GT_ITEM)
+    _gw(R["growth"],
+        "DART 현금흐름표 → 영업활동 조정항목에서 찾으세요.",
+        fill=_GF_BODY, font=_GT_DESC)
+    _gw(R["ebit"],
+        "예) 유형자산감가상각비 + 사용권자산상각비 + 무형자산상각비",
+        fill=_GF_BODY, font=_GT_HINT)
+    _gw(R["da"],
+        "→ 입력 위치: EBITDA 계산 블록 파란색 'D&A' 행",
+        fill=_GF_BODY, font=_GT_HINT)
+    _gw(R["ebitda"],
+        "⚠ D&A를 입력해야 EBITDA · FCF · 전환율이 계산됩니다.",
+        fill=_GF_TIP, font=_GT_TIP)
+    _gw(R["ebitda_pct"], "", fill=_GF_BODY)
+    _gw(R["blank3"],     "", fill=_GF_BODY)
+
+    # ② Maintenance CAPEX ────────────────────────────────────────────────────
+    _gw(R["nwc_hdr"], "② Maintenance CAPEX  (유지보수 투자)",
+        fill=_GF_BODY, font=_GT_ITEM)
+    _gw(R["ar_chg"],
+        "기존 생산설비·장비의 마모·노후화를 교체하기 위한 투자금액.",
+        fill=_GF_BODY, font=_GT_DESC)
+    _gw(R["inv_chg"],
+        "업종 관행 또는 사측 IR 자료를 참고하세요.",
+        fill=_GF_BODY, font=_GT_HINT)
+    _gw(R["ap_chg"],
+        "통상 총 CAPEX의 40~70% 수준.",
+        fill=_GF_BODY, font=_GT_HINT)
+    _gw(R["nwc_tot"], "", fill=_GF_BODY)
+    _gw(R["blank4"],  "", fill=_GF_BODY)
+
+    # ③ Expansion CAPEX ──────────────────────────────────────────────────────
+    _gw(R["ebitda_nwc"], "③ Expansion CAPEX  (성장 투자)",
+        fill=_GF_BODY, font=_GT_ITEM)
+    _gw(R["conv_pct"],
+        "신규 생산능력 확충 또는 신사업을 위한 투자금액.",
+        fill=_GF_BODY, font=_GT_DESC)
+    _gw(R["blank5"],
+        "= Total CAPEX (자동수집) − Maintenance CAPEX (②)",
+        fill=_GF_BODY, font=_GT_HINT)
+    _gw(R["capex_hdr"], "", fill=_GF_BODY)
+    _gw(R["capex_tot"], "", fill=_GF_BODY)
+
+    # 하단 안내
+    _gw(45,
+        "✅  Total CAPEX · Revenue · EBIT · NWC 잔액은\n"
+        "    DART에서 자동 수집됩니다. 수정 불필요.",
+        fill=_GF_TIP, font=_GT_HINT, height=28)
+
+    # 가이드 열 너비
+    ws.column_dimensions[get_column_letter(LAST + 1)].width = 2   # 여백
+    ws.column_dimensions[get_column_letter(GC)].width = 40
+
     # ── 열 너비 / 틀 고정 ─────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 2
     ws.column_dimensions[get_column_letter(CB)].width = 44
