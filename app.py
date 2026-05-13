@@ -643,32 +643,31 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                 result.append(values.get(yr))
         return result
 
-    # ── 첫 연도 증감 (n-1년 잔액 from frmtrm) ───────────────────────────────
     prior_yr = year_cols[0] - 1 if year_cols else None
 
-    def _first_mv(bal: dict, outflow: bool):
-        """첫 연도의 NWC 증감 = thstrm - frmtrm (n-1 잔액 활용)."""
-        if not year_cols:
-            return None
-        cur = bal.get(year_cols[0])
-        prv = bal.get(prior_yr)
-        if cur is None or prv is None:
-            return None
-        return -(cur - prv) if outflow else (cur - prv)
+    def _nwc_mv_formulas(bal_row: int, prior_row: int, outflow: bool) -> list:
+        """NWC Movement: 모든 연도를 인시트 Excel 수식으로 생성.
 
-    def _nwc_mv_formulas(bal_row: int, outflow: bool, first_val=None) -> list:
-        """NWC Movement: 같은 시트 내 잔액 행을 참조하는 수식 리스트.
-        j=0 → first_val (Python 계산, frmtrm 활용)
-        j>0 → 인시트 수식 (cur_col - prv_col)
-        outflow=True  → 증가가 현금유출 (매출채권·재고): -(cur-prv)
-        outflow=False → 증가가 현금유입 (매입채무):       cur-prv
+        j=0 (첫 연도 N):  bal_row 현재열 vs prior_row 현재열
+                          prior_row = N-1 잔액을 담은 숨김 행
+        j>0 (이후 연도):  bal_row 현재열 vs bal_row 이전열
+
+        outflow=True  → AR/Inv: -(cur-prv)  (증가=현금유출)
+        outflow=False → AP:      cur-prv    (증가=현금유입)
         """
         result = []
         for j in range(len(year_cols)):
+            c = get_column_letter(CB + 1 + j)
             if j == 0:
-                result.append(first_val)   # hardcoded value or None
+                # N-1 잔액은 prior_row의 같은 열(CB+1)에 있음
+                pc = get_column_letter(CB + 1)
+                if outflow:
+                    f = (f"=IF(OR({c}{bal_row}=\"\",{pc}{prior_row}=\"\"),\"\","
+                         f"-({c}{bal_row}-{pc}{prior_row}))")
+                else:
+                    f = (f"=IF(OR({c}{bal_row}=\"\",{pc}{prior_row}=\"\"),\"\","
+                         f"{c}{bal_row}-{pc}{prior_row})")
             else:
-                c  = get_column_letter(CB + 1 + j)
                 pc = get_column_letter(CB + j)
                 if outflow:
                     f = (f"=IF(OR({c}{bal_row}=\"\",{pc}{bal_row}=\"\"),\"\","
@@ -676,7 +675,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                 else:
                     f = (f"=IF(OR({c}{bal_row}=\"\",{pc}{bal_row}=\"\"),\"\","
                          f"{c}{bal_row}-{pc}{bal_row})")
-                result.append(f)
+            result.append(f)
         return result
 
     # ── 행 번호 정의 ─────────────────────────────────────────────────────────
@@ -705,6 +704,11 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         "dso": 40, "dio": 41, "dpo": 42,
         "blank9": 43,
         "ccc": 44,
+        # 숨김 행: N-1 잔액/매출 (첫 연도 수식 참조용, 시트에 표시 안 됨)
+        "rev_prior":     46,
+        "ar_bal_prior":  47,
+        "inv_bal_prior": 48,
+        "ap_bal_prior":  49,
     }
 
     # ── 타이틀 ───────────────────────────────────────────────────────────────
@@ -733,24 +737,30 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     ws.row_dimensions[R["hdr2"]].height = 18
     _blank(R["blank2"])
 
+    # ── N-1 Revenue 숨김 행 (Growth % 첫 연도 수식 참조용) ──────────────────
+    _hidden_font_rev = Font(color="FFFFFF")
+    _rev_prior_val = rev.get(prior_yr)
+    _row(R["rev_prior"], "", fill=_F_WHITE, font=_hidden_font_rev,
+         vals=[_rev_prior_val] + [None] * (NC - 1),
+         val_font=_hidden_font_rev)
+    ws.row_dimensions[R["rev_prior"]].height = 0
+
     # ── Revenue ──────────────────────────────────────────────────────────────
     _row(R["rev"], "Revenue", font=_FT_BOLD,
          vals=_ref_vals_simple(rev, rev_dnm, "IS", fs_code_fallback="CIS"))
-    # Growth % — 첫 열: frmtrm 기반 Python 계산, 이후 열은 수식
+    # Growth %: 모든 연도를 인시트 Excel 수식으로 통일
+    # 첫 연도: rev_prior 숨김 행 참조, 이후: 이전 열 참조
     _w(R["growth"], CB, "  Growth %", _F_WHITE, _FT_GREY_ITA, _AL_L)
-    # 첫 연도 growth: rev[prior_yr] (frmtrm) 사용
-    _first_rev_cur = rev.get(year_cols[0]) if year_cols else None
-    _first_rev_prv = rev.get(prior_yr) if prior_yr else None
-    _first_growth  = (
-        (_first_rev_cur / _first_rev_prv - 1)
-        if (_first_rev_cur and _first_rev_prv and _first_rev_prv != 0)
-        else None
-    )
-    _w(R["growth"], CB + 1, _first_growth, _F_WHITE, _FT_GREY_ITA, _AL_R, PCT_FMT)
-    for j in range(1, NC):
+    for j in range(NC):
         c_ltr = col(j)
-        prev_c = col(j - 1)
-        formula = f"=IF(AND({prev_c}{R['rev']}<>\"\",{prev_c}{R['rev']}<>0),{c_ltr}{R['rev']}/{prev_c}{R['rev']}-1,\"\")"
+        if j == 0:
+            pc = get_column_letter(CB + 1)   # rev_prior 의 첫 번째 열
+            formula = (f"=IF(AND({pc}{R['rev_prior']}<>\"\",{pc}{R['rev_prior']}<>0),"
+                       f"{c_ltr}{R['rev']}/{pc}{R['rev_prior']}-1,\"\")")
+        else:
+            prev_c = col(j - 1)
+            formula = (f"=IF(AND({prev_c}{R['rev']}<>\"\",{prev_c}{R['rev']}<>0),"
+                       f"{c_ltr}{R['rev']}/{prev_c}{R['rev']}-1,\"\")")
         _w(R["growth"], CB + 1 + j, formula, _F_WHITE, _FT_GREY_ITA, _AL_R, PCT_FMT)
     ws.row_dimensions[R["growth"]].height = 17
 
@@ -777,13 +787,24 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         _w(R["nwc_hdr"], c, fill=_F_YELLOW)
     ws.row_dimensions[R["nwc_hdr"]].height = 17
 
-    # NWC Movement: 첫 연도는 frmtrm 기반 Python 계산값, 이후는 인시트 수식
+    # ── N-1 잔액 숨김 행 (NWC Movement 첫 연도 수식 참조용) ──────────────────
+    # prior_yr 잔액을 첫 번째 데이터 열(CB+1)에만 기록. 나머지 열은 비워둠.
+    _hidden_font = Font(color="FFFFFF")
+    for _r_key, _bal in [("ar_bal_prior", ar), ("inv_bal_prior", inv), ("ap_bal_prior", ap)]:
+        _pv = _bal.get(prior_yr)
+        _vals = [_pv] + [None] * (NC - 1)
+        _row(R[_r_key], "", fill=_F_WHITE, font=_hidden_font,
+             vals=_vals, val_font=_hidden_font)
+        ws.row_dimensions[R[_r_key]].height = 0   # 완전 숨김
+
+    # NWC Movement: 모든 연도를 인시트 Excel 수식으로 통일
+    # (첫 연도도 N-1 숨김 행을 참조하므로 Python 계산 불필요)
     _row(R["ar_chg"],  "  매출채권 증감 (증가시 -)", font=_FT_NORM,
-         vals=_nwc_mv_formulas(R["ar_bal"],  outflow=True,  first_val=_first_mv(ar,  True)))
+         vals=_nwc_mv_formulas(R["ar_bal"],  R["ar_bal_prior"],  outflow=True))
     _row(R["inv_chg"], "  재고자산 증감 (증가시 -)", font=_FT_NORM,
-         vals=_nwc_mv_formulas(R["inv_bal"], outflow=True,  first_val=_first_mv(inv, True)))
+         vals=_nwc_mv_formulas(R["inv_bal"], R["inv_bal_prior"], outflow=True))
     _row(R["ap_chg"],  "  매입채무 증감 (증가시 +)", font=_FT_NORM,
-         vals=_nwc_mv_formulas(R["ap_bal"],  outflow=False, first_val=_first_mv(ap,  False)),
+         vals=_nwc_mv_formulas(R["ap_bal"],  R["ap_bal_prior"],  outflow=False),
          border_bot=_S_THIN)
     _formula_row(R["nwc_tot"], "Total NWC Movement",
                  f"=IF(AND({{c}}{R['ar_chg']}=\"\",{{c}}{R['inv_chg']}=\"\",{{c}}{R['ap_chg']}=\"\"),\"\","
