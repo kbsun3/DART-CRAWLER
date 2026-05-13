@@ -268,9 +268,10 @@ def _hl_level(account_id: str, has_values: bool, sj_div: str = "") -> int:
 def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
                     corp_name: str, fs_name: str,
                     years: list[int], period_map: dict,
-                    fs_code: str = "") -> dict:
+                    fs_code: str = "") -> tuple[dict, list]:
     """재무제표 시트 작성 — 디자인 사양 준수.
-    Returns: {display_nm: excel_row}  ← Cash Flow Overview 참조 수식 생성용
+    Returns: ({display_nm: excel_row}, year_cols)
+      year_cols: FS 시트에 실제 존재하는 연도 목록 (CFO 참조 수식 컬럼 계산용)
     """
     year_cols = [c for c in pivot.columns if isinstance(c, int)]
     n_yr = len(year_cols)
@@ -390,7 +391,7 @@ def _write_fs_sheet(ws, pivot: pd.DataFrame, id_map: dict,
         ws.column_dimensions[get_column_letter(CB + 1 + j)].width = 17
 
     ws.freeze_panes = f"{get_column_letter(CB + 1)}8"
-    return nm_to_row
+    return nm_to_row, year_cols
 
 
 # ── Cash Flow Overview 분석 시트 ──────────────────────────────────────────────
@@ -435,7 +436,7 @@ def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
         if nm_fallbacks and "account_nm" in rows.columns:
             for nm_pat in nm_fallbacks:
                 m = rows[rows["account_nm"].str.contains(nm_pat, na=False, regex=False)]
-                m = m[~m["account_nm"].str.contains("합계|총계|원가|비용|채권|채무|재고", na=False)]
+                m = m[~m["account_nm"].str.contains("합계|총계", na=False)]
                 if not m.empty:
                     v = m.iloc[0].get(amount_col)
                     if v is not None and not pd.isna(v):
@@ -482,9 +483,11 @@ def _cfo_add(a: dict, b: dict, year_cols: list) -> dict:
 def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                      year_cols: list, period_map: dict,
                      fs_row_maps: dict | None = None,
-                     fs_sheet_names: dict | None = None) -> None:
+                     fs_sheet_names: dict | None = None,
+                     fs_year_maps: dict | None = None) -> None:
     """Cash Flow Overview 분석 시트 작성.
     fs_row_maps   : {fs_code: {display_nm: excel_row}}  ← FS 시트 참조 수식용
+    fs_year_maps  : {fs_code: [year, ...]}              ← FS 시트 연도→컬럼 매핑용
     fs_sheet_names: {fs_code: sheet_name_string}
     """
 
@@ -606,25 +609,36 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     def _ref_vals_simple(values: dict, found_dnm: dict, fs_code: str,
                          fs_code_fallback: str | None = None) -> list:
         """FS 시트 셀 참조 수식. 없으면 값 직접 기입.
-        fs_code_fallback: 첫 번째 fs_code에서 행을 못 찾으면 fallback 시트도 시도.
+
+        핵심: FS 시트의 연도→컬럼 매핑(fs_year_maps)을 사용.
+        CFO 시트와 FS 시트의 연도 집합이 달라도 올바른 컬럼 참조 생성.
+        fs_code_fallback: 주 시트에서 행을 못 찾으면 fallback 시트도 시도 (IS→CIS 등).
         """
         dnm = next((v for v in found_dnm.values() if v is not None), None)
-        # 주 시트에서 행 탐색
-        row_map  = (fs_row_maps   or {}).get(fs_code, {})
-        sheet_nm = (fs_sheet_names or {}).get(fs_code, "")
-        row = row_map.get(dnm) if (dnm and row_map) else None
-        # fallback 시트 탐색 (e.g. IS 못 찾으면 CIS)
-        if row is None and fs_code_fallback:
-            fb_map  = (fs_row_maps   or {}).get(fs_code_fallback, {})
-            fb_nm   = (fs_sheet_names or {}).get(fs_code_fallback, "")
-            fb_row  = fb_map.get(dnm) if (dnm and fb_map) else None
-            if fb_row:
-                row, sheet_nm = fb_row, fb_nm
+
+        def _resolve(code: str):
+            """(sheet_name, row, fs_yr_cols) 또는 None 반환."""
+            row_map  = (fs_row_maps  or {}).get(code, {})
+            sheet_nm = (fs_sheet_names or {}).get(code, "")
+            fs_yrs   = (fs_year_maps or {}).get(code, [])
+            r = row_map.get(dnm) if (dnm and row_map) else None
+            return (sheet_nm, r, fs_yrs) if r else None
+
+        resolved = _resolve(fs_code)
+        if resolved is None and fs_code_fallback:
+            resolved = _resolve(fs_code_fallback)
+
         result = []
-        for j, yr in enumerate(year_cols):
-            if row and sheet_nm:
-                c = get_column_letter(CB + 1 + j)
-                result.append(f"=IF('{sheet_nm}'!{c}{row}=\"\",\"\",'{sheet_nm}'!{c}{row})")
+        for yr in year_cols:
+            if resolved:
+                sheet_nm, row, fs_yrs = resolved
+                if yr in fs_yrs:
+                    # FS 시트의 실제 컬럼 위치 사용 (CFO 컬럼 순서와 독립)
+                    c = get_column_letter(CB + 1 + fs_yrs.index(yr))
+                    result.append(f"=IF('{sheet_nm}'!{c}{row}=\"\",\"\",'{sheet_nm}'!{c}{row})")
+                else:
+                    # 해당 연도가 FS 시트에 없으면 직접 값 기입
+                    result.append(values.get(yr))
             else:
                 result.append(values.get(yr))
         return result
@@ -848,10 +862,12 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     denom_row = R["rev"]   # fallback
 
     if has_cogs:
-        # cogs를 별도 숨김 행에 기록 (수식 참조용) — 마지막 행 아래 숨김
+        # cogs를 별도 숨김 행에 기록 (DSO/DIO/DPO 수식 참조용)
+        # 레이블·폰트 모두 흰색으로 완전 은폐
         cogs_row = R["ccc"] + 2
-        _row(cogs_row, "_cogs_helper", font=_FT_GREY, vals=cogs_vals)
-        ws.row_dimensions[cogs_row].height = 0  # 숨김
+        _row(cogs_row, "", fill=_F_WHITE, font=Font(color="FFFFFF"), vals=cogs_vals,
+             val_font=Font(color="FFFFFF"))
+        ws.row_dimensions[cogs_row].height = 0  # 행 높이 0 (완전 숨김)
         denom_row = cogs_row
 
     _formula_row(R["dso"], "  DSO (매출채권 회수일수)",
@@ -1071,7 +1087,8 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             pass  # 원본데이터 시트 실패해도 계속 진행
 
         # 재무제표별 스타일 시트
-        fs_row_maps: dict[str, dict] = {}   # {fs_code: {display_nm: excel_row}}
+        fs_row_maps:  dict[str, dict] = {}   # {fs_code: {display_nm: excel_row}}
+        fs_year_maps: dict[str, list] = {}   # {fs_code: [year, ...]}  ← 컬럼 위치 계산용
         for fs_code, fs_name in FS_LABELS.items():
             subset = raw[raw["sj_div"] == fs_code].copy()
             if subset.empty:
@@ -1139,12 +1156,14 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             writer.book.create_sheet(sheet_name)
             ws = writer.book[sheet_name]
             try:
-                nm_to_row = _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
-                                            year_cols, period_map, fs_code)
-                fs_row_maps[fs_code] = nm_to_row
+                nm_to_row, fs_yrs = _write_fs_sheet(ws, pivot, id_map, corp_name, fs_name,
+                                                    year_cols, period_map, fs_code)
+                fs_row_maps[fs_code]  = nm_to_row
+                fs_year_maps[fs_code] = fs_yrs
             except Exception as _fs_err:
                 ws.cell(row=2, column=2, value=f"[시트 생성 오류] {_fs_err}")
-                fs_row_maps[fs_code] = {}
+                fs_row_maps[fs_code]  = {}
+                fs_year_maps[fs_code] = []
 
         # ── Cash Flow Overview 분석 시트 ──────────────────────────────────
         all_year_cols = sorted(raw["year"].unique().tolist())
@@ -1152,7 +1171,8 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         try:
             _write_cfo_sheet(ws_cfo, raw, corp_name, all_year_cols, period_map,
                              fs_row_maps=fs_row_maps,
-                             fs_sheet_names={k: v for k, v in FS_LABELS.items()})
+                             fs_sheet_names={k: v for k, v in FS_LABELS.items()},
+                             fs_year_maps=fs_year_maps)
         except Exception as _cfo_err:
             ws_cfo.cell(row=2, column=2, value=f"[CFO 시트 생성 오류] {_cfo_err}")
 
