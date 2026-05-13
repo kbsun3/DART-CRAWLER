@@ -936,7 +936,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
     # 가이드 열 너비 — 내용에 맞게 조정
     ws.column_dimensions[get_column_letter(LAST + 1)].width = 1   # 여백
-    ws.column_dimensions[get_column_letter(GC)].width = 28
+    ws.column_dimensions[get_column_letter(GC)].width = 34
 
     # ── 열 너비 / 틀 고정 ─────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 2
