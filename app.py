@@ -1293,11 +1293,36 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         ws_err["A3"] = traceback.format_exc()
         err_out = BytesIO()
         wb.save(err_out)
+        err_out.seek(0)
+        try:
+            progress.empty()
+        except Exception:
+            pass
         return err_out.getvalue()
-    finally:
-        progress.empty()   # 진행바 항상 제거
 
-    return output.getvalue()
+    # ── 정상 반환 ─────────────────────────────────────────────────────────────
+    # finally 안에서 예외가 나면 return이 취소되므로 finally를 쓰지 않음.
+    # progress 제거는 여기서 직접 처리.
+    try:
+        progress.empty()
+    except Exception:
+        pass
+
+    # ZIP 매직바이트(PK\x03\x04) 검증 — BytesIO가 비거나 손상됐을 경우 fallback
+    output.seek(0)
+    xlsx_bytes = output.read()
+    if xlsx_bytes[:4] != b"PK\x03\x04":
+        from openpyxl import Workbook
+        wb2 = Workbook()
+        ws2 = wb2.active
+        ws2.title = "오류"
+        ws2["A1"] = "Excel 파일 직렬화 실패 (빈 출력)"
+        fb = BytesIO()
+        wb2.save(fb)
+        fb.seek(0)
+        return fb.read()
+
+    return xlsx_bytes
 
 
 # ── CSS ──────────────────────────────────────────────────────────────────────
