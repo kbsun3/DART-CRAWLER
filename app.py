@@ -1449,10 +1449,22 @@ def inject_css():
     }
 
     /* ── 제출 버튼 ── */
-    [data-testid="stFormSubmitButton"] button {
+    [data-testid="stFormSubmitButton"] button,
+    button[data-testid="baseButton-primaryFormSubmit"],
+    button[kind="primaryFormSubmit"],
+    button[data-testid="baseButton-primary"],
+    button[kind="primary"] {
+        background: #2563EB !important;
+        color: white !important;
+        border: none !important;
         border-radius: 10px !important;
         font-weight: 700 !important;
         font-size: 0.95rem !important;
+    }
+    [data-testid="stFormSubmitButton"] button:hover,
+    button[data-testid="baseButton-primary"]:hover,
+    button[kind="primary"]:hover {
+        background: #1D4ED8 !important;
     }
 
 
@@ -1557,7 +1569,7 @@ with _hcol2:
     st.markdown("""
     <div style="padding-top:1.7rem; text-align:right;">
       <a href="." style="
-        background:#EF4444; color:white; text-decoration:none;
+        background:#2563EB; color:white; text-decoration:none;
         border-radius:5px; font-size:0.6rem; font-weight:600;
         padding:0.18rem 0.45rem; white-space:nowrap; line-height:1;
         display:inline-block;
