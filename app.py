@@ -440,7 +440,9 @@ def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
         if nm_fallbacks and "account_nm" in rows.columns:
             for nm_pat in nm_fallbacks:
                 m = rows[rows["account_nm"].str.contains(nm_pat, na=False, regex=False)]
-                m = m[~m["account_nm"].str.contains("합계|총계", na=False)]
+                # nm_pat 자체가 합계/총계를 포함하지 않을 때만 합계행 제외
+                if not any(x in nm_pat for x in ["합계", "총계"]):
+                    m = m[~m["account_nm"].str.contains("합계|총계", na=False)]
                 if not m.empty:
                     v = m.iloc[0].get(amount_col)
                     if v is not None and not pd.isna(v):
@@ -455,6 +457,12 @@ def _cfo_extract(raw: pd.DataFrame, sj_div: str, patterns: list,
         if result[yr] is None and i + 1 < len(year_cols):
             nxt = year_cols[i + 1]
             v, dnm = _search(sub[sub["year"] == nxt], "frmtrm_amount")
+            if v is not None:
+                result[yr], found_dnm[yr] = v, dnm
+        # 3차: 2년 뒤 연도 bfefrmtrm (전전기 비교컬럼)
+        if result[yr] is None and i + 2 < len(year_cols):
+            nxt2 = year_cols[i + 2]
+            v, dnm = _search(sub[sub["year"] == nxt2], "bfefrmtrm_amount")
             if v is not None:
                 result[yr], found_dnm[yr] = v, dnm
 
@@ -1616,9 +1624,17 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
                 .first()
                 .to_dict()
             )
-            raw.loc[~non_std_mask, "account_nm"] = raw.loc[~non_std_mask, "account_id"].map(
-                lambda aid: canonical.get(aid, "")
+            # account_id → canonical 이름 매핑
+            # canonical.get(aid, "") 대신 None fallback 후 원본 유지:
+            # account_id가 NaN이거나 canonical에 없는 경우(구형 taxonomy 등)
+            # 원래 account_nm을 그대로 보존.  "" 덮어쓰기 방지.
+            _orig_nms = raw.loc[~non_std_mask, "account_nm"].copy()
+            _mapped   = raw.loc[~non_std_mask, "account_id"].map(
+                lambda aid: canonical.get(aid)
+                            if (aid and pd.notna(aid) and str(aid).strip())
+                            else None
             )
+            raw.loc[~non_std_mask, "account_nm"] = _mapped.fillna(_orig_nms)
 
     # Bug #1 수정: 재무제표·연도 내 중복 account_nm을 자동 감지 후 display_nm 생성
     if "account_id" in raw.columns:
