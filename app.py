@@ -1534,6 +1534,12 @@ if not _api_ready:
                 else:
                     st.error("유효한 API 키를 입력해주세요 (40자리).")
 
+    st.markdown("""
+    <div style="text-align:center; margin-top:2.5rem; color:#CBD5E1; font-size:0.78rem;">
+        Contact: 010-9688-3575
+    </div>
+    """, unsafe_allow_html=True)
+
     st.stop()
 
 # ── 여기서부터 인증 완료된 사용자만 접근 ─────────────────────────────────────
