@@ -1084,6 +1084,271 @@ def parse_amount(val):
         return None
 
 
+def _write_summary_sheet(ws, raw: pd.DataFrame, corp_name: str,
+                         year_cols: list, period_map: dict):
+    """BS / IS 5개년 요약 시트 작성."""
+    n_yr  = len(year_cols)
+    CB    = 2            # B열 시작
+    LAST  = CB + n_yr
+    PCT_FMT = '0%;(0%);-'
+
+    # ── 셀 헬퍼 ─────────────────────────────────────────────────────────────
+    def _w(row, col, value=None, fill=_F_WHITE, font=_FT_NORM,
+           align=_AL_L, fmt=None, border=None):
+        c = ws.cell(row=row, column=col, value=value)
+        c.fill = fill; c.font = font; c.alignment = align
+        if fmt:    c.number_format = fmt
+        if border: c.border = border
+        return c
+
+    # ── 데이터 추출 헬퍼 ─────────────────────────────────────────────────────
+    def _get(sj_div, patterns, nms=None, fallback=None):
+        vals, _ = _cfo_extract(raw, sj_div, patterns, year_cols,
+                               nm_fallbacks=nms, sj_div_fallback=fallback)
+        return [vals.get(yr) for yr in year_cols]
+
+    def _calc(a_list, b_list, op="-"):
+        out = []
+        for a, b in zip(a_list, b_list):
+            if a is None or b is None:
+                out.append(None)
+            else:
+                out.append(a - b if op == "-" else a + b)
+        return out
+
+    def _ratio(num, den, pct=True):
+        out = []
+        for n, d in zip(num, den):
+            if n is None or d is None or d == 0:
+                out.append(None)
+            else:
+                out.append(round(n / d * (100 if pct else 1), 1))
+        return out
+
+    # ── BS 데이터 ────────────────────────────────────────────────────────────
+    bs_ca    = _get("BS", ["CurrentAssets"],                              ["유동자산"])
+    bs_cash  = _get("BS", ["CashAndCashEquivalents"],                     ["현금및현금성자산"])
+    bs_ar    = _get("BS", ["TradeAndOtherCurrentReceivables","TradeReceivables"], ["매출채권"])
+    bs_inv   = _get("BS", ["Inventories"],                                ["재고자산"])
+    bs_nca   = _get("BS", ["NoncurrentAssets"],                           ["비유동자산"])
+    bs_ppe   = _get("BS", ["PropertyPlantAndEquipment"],                  ["유형자산"])
+    bs_intan = _get("BS", ["IntangibleAssetsOtherThanGoodwill","IntangibleAssets"], ["무형자산"])
+    bs_ta    = _get("BS", ["Assets"],                                     ["자산총계"])
+    bs_cl    = _get("BS", ["CurrentLiabilities"],                         ["유동부채"])
+    bs_std   = _get("BS", ["ShorttermBorrowings","CurrentPortionOfLongtermBorrowings"], ["단기차입금"])
+    bs_ncl   = _get("BS", ["NoncurrentLiabilities"],                      ["비유동부채"])
+    bs_ltd   = _get("BS", ["LongtermBorrowings"],                         ["장기차입금"])
+    bs_tl    = _get("BS", ["Liabilities"],                                ["부채총계"])
+    bs_eq    = _get("BS", ["Equity"],                                     ["자본총계"])
+    div_paid = _get("CF", ["DividendsPaidClassifiedAsFinancingActivities","DividendsPaid"],
+                          ["배당금지급"])
+
+    # 계산항목
+    bs_oca   = [None if any(x is None for x in [ca,cash,ar,inv]) else ca-cash-ar-inv
+                for ca,cash,ar,inv in zip(bs_ca,bs_cash,bs_ar,bs_inv)]
+    bs_onca  = [None if any(x is None for x in [nca,ppe,intan]) else nca-ppe-intan
+                for nca,ppe,intan in zip(bs_nca,bs_ppe,bs_intan)]
+    bs_ocl   = [None if any(x is None for x in [cl,std]) else cl-std
+                for cl,std in zip(bs_cl,bs_std)]
+    bs_oncl  = [None if any(x is None for x in [ncl,ltd]) else ncl-ltd
+                for ncl,ltd in zip(bs_ncl,bs_ltd)]
+    bs_cr    = _ratio(bs_ca,  bs_cl)
+    bs_dr    = _ratio(bs_tl,  bs_eq)
+    bs_nc    = [None if cash is None else cash - ((std or 0) + (ltd or 0))
+                for cash,std,ltd in zip(bs_cash,bs_std,bs_ltd)]
+    div_abs  = [abs(v) if v is not None else None for v in div_paid]
+
+    # ── IS 데이터 ────────────────────────────────────────────────────────────
+    is_rev   = _get("IS", ["Revenue","Sales"],           ["매출","수익(매출액)"], "CIS")
+    is_cogs  = _get("IS", ["CostOfSales"],               ["매출원가"],            "CIS")
+    is_gp    = _get("IS", ["GrossProfit"],               ["매출총이익"],          "CIS")
+    is_sga   = _get("IS", ["SellingGeneralAndAdministrativeExpense",
+                            "SalesGeneralAndAdministrativeExpense"],
+                          ["판매비와관리비"],  "CIS")
+    is_emp   = _get("IS", ["EmployeeBenefitsExpense","WagesAndSalaries"],
+                          ["인건비","급여"],   "CIS")
+    is_ga    = _get("IS", ["GeneralAndAdministrativeExpense"],
+                          ["일반관리비"],      "CIS")
+    is_sell  = _get("IS", ["DistributionCosts","SellingExpense"],
+                          ["판매비"],          "CIS")
+    is_op    = _get("IS", ["ProfitLossFromOperatingActivities","OperatingIncomeLoss"],
+                          ["영업이익"],        "CIS")
+    is_tax   = _get("IS", ["IncomeTaxExpense"],          ["법인세비용"],          "CIS")
+    is_np    = _get("IS", ["ProfitLoss"],                ["당기순이익"],          "CIS")
+    is_dep   = _get("IS", ["DepreciationAndAmortisationExpense",
+                            "DepreciationRightofuseAssets"],
+                          ["감가상각비"],      "CIS")
+    is_amort = _get("IS", ["AmortisationIntangibleAssets"],
+                          ["무형자산상각비"],  "CIS")
+
+    # 계산항목
+    is_other_sga = [
+        None if sga is None else sga - (emp or 0) - (ga or 0) - (sell or 0)
+        if any(x is not None for x in [emp,ga,sell]) else None
+        for sga,emp,ga,sell in zip(is_sga,is_emp,is_ga,is_sell)
+    ]
+    is_nonop = [
+        None if any(x is None for x in [np_,op,tax]) else np_ - op + tax
+        for np_,op,tax in zip(is_np,is_op,is_tax)
+    ]
+    is_da    = [None if (d is None and a is None) else (d or 0)+(a or 0)
+                for d,a in zip(is_dep,is_amort)]
+    is_ebitda = [None if op is None or da is None else op+da
+                 for op,da in zip(is_op,is_da)]
+    is_gpm   = _ratio(is_gp,    is_rev)
+    is_opm   = _ratio(is_op,    is_rev)
+    is_epm   = _ratio(is_ebitda,is_rev)
+
+    # ── 시트 레이아웃 ────────────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 2
+    ws.column_dimensions[get_column_letter(CB)].width = 24
+    for j in range(n_yr):
+        ws.column_dimensions[get_column_letter(CB+1+j)].width = 13
+
+    r = [1]  # mutable row pointer
+
+    def _nxt(): r[0] += 1
+
+    def _gap(h=6):
+        ws.row_dimensions[r[0]].height = h
+        _nxt()
+
+    def _section(title):
+        # 타이틀
+        _w(r[0], CB, title, _F_BLACK, _FT_TITLE, _AL_L)
+        for c in range(CB+1, LAST+1):
+            ws.cell(row=r[0], column=c).fill = _F_BLACK
+        ws.merge_cells(start_row=r[0], start_column=CB, end_row=r[0], end_column=LAST)
+        ws.row_dimensions[r[0]].height = 28
+        _nxt()
+        # 단위
+        _w(r[0], CB, "단위: 억원", _F_WHITE, _FT_UNIT, _AL_L)
+        ws.row_dimensions[r[0]].height = 14
+        _nxt()
+        # 헤더
+        _w(r[0], CB, "항목", _F_NAVY, _FT_H1, _AL_L)
+        for j, yr in enumerate(year_cols):
+            _w(r[0], CB+1+j, f"FY{str(yr)[2:]}", _F_NAVY, _FT_H1,
+               Alignment(horizontal="center", vertical="center"))
+        ws.row_dimensions[r[0]].height = 20
+        _nxt()
+
+    _FT_RED = Font(name="맑은 고딕", size=11, color="C00000")
+    _FT_RED_BOLD = Font(name="맑은 고딕", size=11, color="C00000", bold=True)
+
+    def _row(label, vals, style="detail", indent=1, is_pct=False,
+             neg_red=False, double_bot=False):
+        """
+        style: "total" | "subtotal" | "header" | "detail" | "ratio"
+        """
+        row_idx = r[0]
+        if style == "total":
+            fill, lbl_font = _F_GREEN, _FT_BOLD
+            lbl_align = _AL_L
+        elif style == "subtotal":
+            fill, lbl_font = _F_WHITE, _FT_BOLD
+            lbl_align = _AL_L
+        elif style == "header":
+            fill, lbl_font = _F_YELLOW, _FT_BOLD
+            lbl_align = _AL_L
+        elif style == "ratio":
+            fill, lbl_font = _F_WHITE, _FT_GREY_ITA
+            lbl_align = Alignment(horizontal="left", vertical="center", indent=indent)
+        else:  # detail
+            fill, lbl_font = _F_WHITE, _FT_NORM
+            lbl_align = Alignment(horizontal="left", vertical="center", indent=indent)
+
+        border = None
+        if style in ("total", "subtotal"):
+            bot = _S_DOUBLE if double_bot else _S_THIN
+            border = Border(top=_S_THIN, bottom=bot)
+
+        _w(row_idx, CB, label, fill, lbl_font, lbl_align, border=border)
+
+        fmt = PCT_FMT if is_pct else _NUM_FMT
+        for j, val in enumerate(vals):
+            col_idx = CB+1+j
+            bdr = Border(top=border.top, bottom=border.bottom) if border else None
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                _w(row_idx, col_idx, None, fill, _FT_GREY, _AL_R, fmt, bdr)
+            else:
+                v = val / 100 if is_pct else val
+                is_neg = v < 0
+                if neg_red and is_neg:
+                    vf = _FT_RED_BOLD if style in ("total","subtotal") else _FT_RED
+                elif style in ("total","subtotal") and not is_pct:
+                    vf = _FT_BOLD
+                elif style == "ratio":
+                    vf = _FT_GREY_ITA
+                else:
+                    vf = _FT_NORM
+                _w(row_idx, col_idx, v, fill, vf, _AL_R, fmt, bdr)
+
+        ws.row_dimensions[row_idx].height = 17
+        _nxt()
+
+    # ── 1행 여백 ──
+    ws.row_dimensions[1].height = 8
+    r[0] = 2
+
+    # ══════════════════ BS 섹션 ══════════════════════════════════════════════
+    _section(f"{corp_name} — 재무상태표 요약 (BS)")
+
+    _row("유동자산",         bs_ca,    "subtotal", indent=0)
+    _row("  현금및현금성자산", bs_cash, "detail",   indent=1)
+    _row("  매출채권",        bs_ar,   "detail",   indent=1)
+    _row("  재고자산",        bs_inv,  "detail",   indent=1)
+    _row("  기타유동자산",    bs_oca,  "detail",   indent=1)
+    _row("비유동자산",        bs_nca,  "subtotal", indent=0)
+    _row("  유형자산",        bs_ppe,  "detail",   indent=1)
+    _row("  무형자산",        bs_intan,"detail",   indent=1)
+    _row("  기타비유동자산",  bs_onca, "detail",   indent=1)
+    _row("자산총계",          bs_ta,   "total",    indent=0, double_bot=True)
+
+    _gap()
+
+    _row("유동부채",          bs_cl,   "subtotal", indent=0)
+    _row("  유동차입부채",    bs_std,  "detail",   indent=1)
+    _row("  기타유동부채",    bs_ocl,  "detail",   indent=1)
+    _row("비유동부채",        bs_ncl,  "subtotal", indent=0)
+    _row("  비유동차입부채",  bs_ltd,  "detail",   indent=1)
+    _row("  기타비유동부채",  bs_oncl, "detail",   indent=1)
+    _row("부채총계",          bs_tl,   "total",    indent=0)
+    _row("순자산",            bs_eq,   "total",    indent=0, double_bot=True)
+
+    _gap()
+
+    _row("유동비율(%)",       bs_cr,   "ratio",    is_pct=True)
+    _row("부채비율(%)",       bs_dr,   "ratio",    is_pct=True)
+    _row("Net Cash",          bs_nc,   "detail",   indent=0, neg_red=True)
+    _row("배당지급액",        div_abs, "detail",   indent=0)
+
+    _gap(h=18)
+
+    # ══════════════════ IS 섹션 ══════════════════════════════════════════════
+    _section(f"{corp_name} — 손익계산서 요약 (IS)")
+
+    _row("매출",              is_rev,  "subtotal", indent=0)
+    _row("  매출원가",        is_cogs, "detail",   indent=1)
+    _row("매출총이익",        is_gp,   "subtotal", indent=0)
+    _row("  Margin %",        is_gpm,  "ratio",    is_pct=True)
+    _row("판매비와관리비",    is_sga,  "detail",   indent=0)
+    _row("  인건비",          is_emp,  "detail",   indent=1)
+    _row("  일반관리비",      is_ga,   "detail",   indent=1)
+    _row("  판매비",          is_sell, "detail",   indent=1)
+    _row("  기타판관비",      is_other_sga, "detail", indent=1)
+    _row("영업이익(손실)",    is_op,   "total",    indent=0, neg_red=True)
+    _row("  영업이익률",      is_opm,  "ratio",    is_pct=True)
+    _row("  영업외손익",      is_nonop,"detail",   indent=1, neg_red=True)
+    _row("  법인세비용(수익)",is_tax,  "detail",   indent=1)
+    _row("당기순이익(손실)",  is_np,   "total",    indent=0, neg_red=True, double_bot=True)
+    _row("  상각비",          is_da,   "detail",   indent=1)
+    _row("EBITDA",            is_ebitda,"subtotal",indent=0)
+    _row("  EBITDA (%)",      is_epm,  "ratio",    is_pct=True)
+
+    ws.freeze_panes = f"{get_column_letter(CB+1)}4"
+
+
 def build_excel(corp_code: str, corp_name: str, stock_code: str,
                 years: list[int], reprt_code: str) -> bytes:
     all_frames = []
@@ -1299,7 +1564,15 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         except Exception as _cfo_err:
             ws_cfo.cell(row=2, column=2, value=f"[CFO 시트 생성 오류] {_cfo_err}")
 
-        # ── 시트 순서 조정: Cash Flow Overview → 원본데이터 바로 다음 ──────
+        # ── 5Y 요약 시트 ────────────────────────────────────────────────────
+        ws_sum = writer.book.create_sheet("5Y 요약")
+        try:
+            _write_summary_sheet(ws_sum, raw, corp_name, all_year_cols, period_map)
+        except Exception as _sum_err:
+            ws_sum.cell(row=2, column=2, value=f"[요약 시트 생성 오류] {_sum_err}")
+
+        # ── 시트 순서 조정 ──────────────────────────────────────────────────
+        # 순서: 정보 | 5Y 요약 | Cash Flow Overview | 원본데이터 | FS 시트들
         _wb = writer.book
         try:
             _cfo_ws = _wb["Cash Flow Overview"]
@@ -1307,7 +1580,14 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             _raw_idx = _wb.sheetnames.index("원본데이터")
             _wb._sheets.insert(_raw_idx + 1, _cfo_ws)
         except Exception:
-            pass  # 순서 조정 실패해도 시트 내용에는 영향 없음
+            pass
+
+        try:
+            _sum_ws = _wb["5Y 요약"]
+            _wb._sheets.remove(_sum_ws)
+            _wb._sheets.insert(1, _sum_ws)   # 정보 시트 다음 = index 1
+        except Exception:
+            pass
 
     except Exception as _wb_err:
         # with 블록 자체의 예외 (ExcelWriter 초기화 실패 등)
