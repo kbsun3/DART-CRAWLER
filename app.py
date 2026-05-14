@@ -1487,6 +1487,29 @@ inject_css()
 
 # ── 사이드바: API 키 인증 ─────────────────────────────────────────────────────
 with st.sidebar:
+    # 닫기 버튼 (Streamlit 네이티브 버튼이 안 보일 경우를 위한 JS 백업)
+    st.markdown("""
+    <div style="display:flex; justify-content:flex-end; margin:-0.5rem -0.5rem 0.5rem;">
+      <button onclick="(function(){
+        var sel = [
+          '[data-testid=stSidebarCollapseButton]',
+          'section[data-testid=stSidebar] button[kind=header]',
+          'section[data-testid=stSidebar] > div > button',
+          'button[aria-label*=sidebar i]',
+          'button[aria-label*=close i]'
+        ];
+        for(var i=0;i<sel.length;i++){
+          var b=window.parent.document.querySelector(sel[i]);
+          if(b){b.click();return;}
+        }
+      })()" style="
+        background:none; border:none; cursor:pointer;
+        font-size:1.25rem; color:#94A3B8; padding:4px 8px;
+        border-radius:6px; line-height:1;
+      " title="사이드바 닫기">✕</button>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.markdown("### 🔑 API 키 설정")
 
     # ── 마스터 코드 (4자리) ──
