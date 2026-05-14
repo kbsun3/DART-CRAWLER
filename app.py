@@ -1613,28 +1613,71 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
     # 동일 account_id가 연도마다 다른 account_nm을 가질 때 가장 최근 연도 기준으로 통일.
     # 예: '영업활동현금흐름표'(FY21) vs '영업활동현금흐름'(FY24) → 동일 IFRS 요소
     # 비표준 계정('-표준계정코드 미사용-')은 account_id가 없으므로 account_nm 유지.
-    if "account_id" in raw.columns:
+    #
+    # ★ 주요 수정 (두 가지 근본 원인):
+    #   1) DART가 2019년부터 account_id prefix를 ifrs_ → ifrs-full_ 로 변경.
+    #      동일 계정(e.g. ifrs_Equity vs ifrs-full_Equity)이 별개 key로 취급되어
+    #      pivot에서 행이 분리 → 10년 중 절반이 빈값으로 나타남.
+    #      → prefix 정규화: ifrs_X → ifrs-full_X 통일 후 canonical 생성.
+    #   2) canonical 정규화가 sj_div를 무시 → BS "자본총계"(ifrs_Equity)와
+    #      SCE "기말자본"(ifrs_Equity)이 서로 오염돼 이름 불일치 발생.
+    #      → (정규화된 account_id, sj_div) 복합키로 canonical 생성.
+    if "account_id" in raw.columns and "sj_div" in raw.columns:
         non_std_mask = raw["account_id"].str.contains("표준계정코드 미사용", na=False)
-        std_rows = raw[~non_std_mask]
+        std_rows = raw[~non_std_mask].copy()
         if not std_rows.empty:
-            # account_id 별 최신 연도의 account_nm을 정규 명칭으로 채택
-            canonical = (
+            # ifrs_ prefix → ifrs-full_ 정규화 (2019년 DART taxonomy 변경 대응)
+            def _norm_aid(aid):
+                if isinstance(aid, str) and aid.startswith("ifrs_"):
+                    return "ifrs-full_" + aid[5:]
+                return aid
+
+            std_rows["_norm_aid"] = std_rows["account_id"].apply(_norm_aid)
+
+            # (정규화된 account_id, sj_div) 기준으로 최신 연도 account_nm 채택
+            # → BS/CIS/SCE 등 시트별로 분리 적용: 시트 간 계정명 오염 방지
+            canonical_by_sj = (
                 std_rows.sort_values("year", ascending=False)
-                .groupby("account_id")["account_nm"]
+                .groupby(["_norm_aid", "sj_div"])["account_nm"]
+                .first()
+                .to_dict()  # key: (norm_aid, sj_div)
+            )
+
+            # 각 행의 (norm_aid, sj_div)로 canonical 이름 조회
+            _orig_nms = raw.loc[~non_std_mask, "account_nm"].copy()
+            _sub      = raw.loc[~non_std_mask, ["account_id", "sj_div"]]
+            _mapped   = _sub.apply(
+                lambda r: canonical_by_sj.get((_norm_aid(str(r["account_id"])), r["sj_div"]))
+                          if (r["account_id"] and pd.notna(r["account_id"])
+                              and str(r["account_id"]).strip())
+                          else None,
+                axis=1,
+            )
+            raw.loc[~non_std_mask, "account_nm"] = _mapped.fillna(_orig_nms)
+
+    # 공백 정규화: dart_ → ifrs-full_ account_id 교체 시 account_nm 공백 차이 통합
+    # 예: "기타유동부채"(dart_OtherCurrentLiabilities, ~2022) vs
+    #     "기타 유동부채"(ifrs-full_OtherCurrentLiabilities, 2023~)
+    # → 동일 sj_div 내 공백 제거 시 같은 이름이면 최신 연도 명칭으로 통일
+    if "sj_div" in raw.columns and "account_nm" in raw.columns:
+        for _sj in raw["sj_div"].unique():
+            _sj_mask = raw["sj_div"] == _sj
+            _sub_nm  = raw.loc[_sj_mask, ["year", "account_nm"]].copy()
+            _sub_nm["_stripped"] = _sub_nm["account_nm"].apply(
+                lambda nm: nm.replace(" ", "") if isinstance(nm, str) else nm
+            )
+            # stripped 기준 최신 연도 account_nm 채택
+            _strip_canon = (
+                _sub_nm.sort_values("year", ascending=False)
+                .groupby("_stripped")["account_nm"]
                 .first()
                 .to_dict()
             )
-            # account_id → canonical 이름 매핑
-            # canonical.get(aid, "") 대신 None fallback 후 원본 유지:
-            # account_id가 NaN이거나 canonical에 없는 경우(구형 taxonomy 등)
-            # 원래 account_nm을 그대로 보존.  "" 덮어쓰기 방지.
-            _orig_nms = raw.loc[~non_std_mask, "account_nm"].copy()
-            _mapped   = raw.loc[~non_std_mask, "account_id"].map(
-                lambda aid: canonical.get(aid)
-                            if (aid and pd.notna(aid) and str(aid).strip())
-                            else None
+            raw.loc[_sj_mask, "account_nm"] = raw.loc[_sj_mask, "account_nm"].apply(
+                lambda nm: _strip_canon.get(
+                    nm.replace(" ", "") if isinstance(nm, str) else nm, nm
+                )
             )
-            raw.loc[~non_std_mask, "account_nm"] = _mapped.fillna(_orig_nms)
 
     # Bug #1 수정: 재무제표·연도 내 중복 account_nm을 자동 감지 후 display_nm 생성
     if "account_id" in raw.columns:
