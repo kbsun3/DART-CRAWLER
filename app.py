@@ -1356,31 +1356,16 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
 def inject_css():
     st.markdown("""
     <style>
-    /* ── 기본 리셋: 툴바·푸터만 숨기고 사이드바 토글은 유지 ── */
+    /* ── 기본 리셋: 햄버거·푸터·툴바 숨김 ── */
     #MainMenu { visibility: hidden; }
     footer { visibility: hidden; }
-    /* Streamlit 상단 툴바 (Deploy, Settings 등) 숨김 */
     [data-testid="stToolbar"] { visibility: hidden; }
-    /* 상단 헤더 여백 제거 */
     [data-testid="stHeader"] { background: transparent; }
-
-    /* ── 사이드바 열기/닫기 버튼 강제 표시 ── */
-    [data-testid="stSidebarCollapseButton"],
+    /* 사이드바 완전 숨김 (expander로 대체) */
+    section[data-testid="stSidebar"],
     [data-testid="collapsedControl"],
     [data-testid="stSidebarCollapsedControl"] {
-        visibility: visible !important;
-        opacity: 1 !important;
-        display: flex !important;
-        pointer-events: auto !important;
-    }
-    /* 사이드바 내부 닫기 버튼 */
-    section[data-testid="stSidebar"] button[kind="header"],
-    section[data-testid="stSidebar"] > div:first-child > div > button {
-        visibility: visible !important;
-        opacity: 1 !important;
-        display: flex !important;
-        pointer-events: auto !important;
-        color: #0F172A !important;
+        display: none !important;
     }
 
     /* ── 전체 컨테이너: 좌우 대칭 여백 + 고정 너비 ── */
@@ -1482,38 +1467,17 @@ def inject_css():
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="DARTSHEET", page_icon=None, layout="centered",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="collapsed")
 inject_css()
 
-# ── 사이드바: API 키 인증 ─────────────────────────────────────────────────────
-with st.sidebar:
-    # 닫기 버튼 (Streamlit 네이티브 버튼이 안 보일 경우를 위한 JS 백업)
-    st.markdown("""
-    <div style="display:flex; justify-content:flex-end; margin:-0.5rem -0.5rem 0.5rem;">
-      <button onclick="(function(){
-        var sel = [
-          '[data-testid=stSidebarCollapseButton]',
-          'section[data-testid=stSidebar] button[kind=header]',
-          'section[data-testid=stSidebar] > div > button',
-          'button[aria-label*=sidebar i]',
-          'button[aria-label*=close i]'
-        ];
-        for(var i=0;i<sel.length;i++){
-          var b=window.parent.document.querySelector(sel[i]);
-          if(b){b.click();return;}
-        }
-      })()" style="
-        background:none; border:none; cursor:pointer;
-        font-size:1.25rem; color:#94A3B8; padding:4px 8px;
-        border-radius:6px; line-height:1;
-      " title="사이드바 닫기">✕</button>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("### 🔑 API 키 설정")
-
+# ── API 키 인증 (expander) ────────────────────────────────────────────────────
+_api_ready = (
+    st.session_state.get("_master_auth")
+    or bool(st.session_state.get("_user_api_key", "").strip())
+)
+with st.expander("🔑 API 키 설정", expanded=not _api_ready):
     # ── 마스터 코드 (4자리) ──
-    st.caption("마스터 코드")
+    st.caption("마스터 코드 (관리자 전용)")
     _code_input = st.text_input(
         "마스터 코드",
         max_chars=4,
@@ -1535,7 +1499,7 @@ with st.sidebar:
     else:
         # ── 개인 DART API 키 ──
         st.markdown("---")
-        st.caption("또는 본인 DART API 키 직접 입력")
+        st.caption("본인 DART API 키 입력")
         st.markdown(
             "<small><a href='https://opendart.fss.or.kr/uat/uia/easyLogin.do' target='_blank'>"
             "키 발급 → opendart.fss.or.kr</a></small>",
@@ -1574,7 +1538,7 @@ with st.spinner("DART 기업 목록 초기화 중..."):
 
 # API 키 없으면 검색 불가
 if not get_api_key():
-    st.warning("← 왼쪽 사이드바에서 마스터 코드 또는 DART API 키를 입력해주세요.")
+    st.warning("☝️ 위 'API 키 설정'을 열어 마스터 코드 또는 DART API 키를 입력해주세요.")
     st.stop()
 
 # 검색 폼
