@@ -1473,56 +1473,74 @@ st.set_page_config(page_title="DARTSHEET", page_icon=None, layout="centered",
                    initial_sidebar_state="collapsed")
 inject_css()
 
-# ── API 키 인증 (expander) ────────────────────────────────────────────────────
+# ── 인증 상태 확인 ────────────────────────────────────────────────────────────
 _api_ready = (
     st.session_state.get("_master_auth")
     or bool(st.session_state.get("_user_api_key", "").strip())
 )
-with st.expander("🔑 API 키 설정", expanded=not _api_ready):
-    # ── 마스터 코드 (4자리) ──
-    st.caption("마스터 코드 (관리자 전용)")
-    _code_input = st.text_input(
-        "마스터 코드",
-        max_chars=4,
-        type="password",
-        placeholder="4자리 코드",
-        label_visibility="collapsed",
-        key="_code_input",
-    )
-    if _code_input and _MASTER_CODE and _code_input == _MASTER_CODE:
-        st.session_state["_master_auth"] = True
-    elif _code_input:
-        st.session_state["_master_auth"] = False
 
-    if st.session_state.get("_master_auth"):
-        st.success("✓ 인증됨 — 공용 키 사용 중")
-        if st.button("초기화", use_container_width=True):
-            st.session_state["_master_auth"] = False
-            st.rerun()
-    else:
-        # ── 개인 DART API 키 ──
-        st.markdown("---")
-        st.caption("본인 DART API 키 입력")
-        st.markdown(
-            "<small><a href='https://opendart.fss.or.kr/uat/uia/easyLogin.do' target='_blank'>"
-            "키 발급 → opendart.fss.or.kr</a></small>",
-            unsafe_allow_html=True,
-        )
-        _key_input = st.text_input(
-            "DART API 키",
-            value=st.session_state.get("_user_api_key", ""),
-            type="password",
-            placeholder="40자리 API 키",
-            label_visibility="collapsed",
-        )
-        if _key_input.strip():
-            st.session_state["_user_api_key"] = _key_input.strip()
-            st.success("✓ 개인 키 사용 중")
-            if st.button("초기화", use_container_width=True, key="_clear_key"):
-                st.session_state.pop("_user_api_key", None)
-                st.rerun()
-        else:
-            st.session_state.pop("_user_api_key", None)
+# ── 로그인 페이지 ─────────────────────────────────────────────────────────────
+if not _api_ready:
+    st.markdown("""
+    <div style="min-height:30vh; display:flex; align-items:center; justify-content:center;">
+    </div>
+    <div style="max-width:400px; margin:0 auto;">
+      <div style="text-align:center; margin-bottom:2rem;">
+        <div style="font-size:2rem; font-weight:900; letter-spacing:-0.04em; color:#0F172A;">
+          DARTSHEET
+        </div>
+        <div style="font-size:0.85rem; color:#94A3B8; margin-top:0.4rem;">
+          국내 상장사 재무제표 자동 수집
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 카드 컨테이너
+    with st.container():
+        # 탭: 마스터 코드 / 개인 API 키
+        _tab_master, _tab_personal = st.tabs(["관리자 코드", "개인 API 키"])
+
+        with _tab_master:
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+            _code_input = st.text_input(
+                "마스터 코드",
+                max_chars=4,
+                type="password",
+                placeholder="4자리 코드 입력",
+                key="_login_code",
+            )
+            if st.button("입장하기", use_container_width=True, type="primary", key="_btn_master"):
+                if _code_input and _MASTER_CODE and _code_input == _MASTER_CODE:
+                    st.session_state["_master_auth"] = True
+                    st.rerun()
+                else:
+                    st.error("코드가 올바르지 않습니다.")
+
+        with _tab_personal:
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+            st.markdown(
+                "<small style='color:#94A3B8'>키 발급: "
+                "<a href='https://opendart.fss.or.kr/uat/uia/easyLogin.do' target='_blank'>"
+                "opendart.fss.or.kr</a></small>",
+                unsafe_allow_html=True,
+            )
+            _key_input = st.text_input(
+                "DART API 키",
+                type="password",
+                placeholder="40자리 API 키 입력",
+                key="_login_key",
+            )
+            if st.button("입장하기", use_container_width=True, type="primary", key="_btn_personal"):
+                if len(_key_input.strip()) >= 30:
+                    st.session_state["_user_api_key"] = _key_input.strip()
+                    st.rerun()
+                else:
+                    st.error("유효한 API 키를 입력해주세요 (40자리).")
+
+    st.stop()
+
+# ── 여기서부터 인증 완료된 사용자만 접근 ─────────────────────────────────────
 
 st.markdown("""
 <div class="app-header">
@@ -1531,6 +1549,16 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# 우측 상단 로그아웃 버튼
+_logout_col = st.columns([6, 1])[1]
+with _logout_col:
+    if st.button("로그아웃", key="_logout"):
+        st.session_state.pop("_master_auth", None)
+        st.session_state.pop("_user_api_key", None)
+        st.session_state.pop("_search_state", None)
+        st.session_state.pop("_excel_bytes", None)
+        st.rerun()
+
 # 기업코드 목록 로드
 with st.spinner("DART 기업 목록 초기화 중..."):
     try:
@@ -1538,11 +1566,6 @@ with st.spinner("DART 기업 목록 초기화 중..."):
     except Exception as e:
         st.error(f"DART 기업 목록 로드 실패: {e}")
         st.stop()
-
-# API 키 없으면 검색 불가
-if not get_api_key():
-    st.warning("☝️ 위 'API 키 설정'을 열어 마스터 코드 또는 DART API 키를 입력해주세요.")
-    st.stop()
 
 # 검색 폼
 st.markdown('<div class="card"><div class="card-title">기업 검색</div>', unsafe_allow_html=True)
