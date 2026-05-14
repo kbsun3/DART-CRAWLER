@@ -12,10 +12,19 @@ from io import BytesIO
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-API_KEY = (
+_OWNER_API_KEY  = (
     os.environ.get("DART_API_KEY")
-    or st.secrets.get("DART_API_KEY", "f0b490beadb3e0200407e2f237b58bca1ae74ac4")
+    or st.secrets.get("DART_API_KEY", "")
 )
+_MASTER_CODE = st.secrets.get("MASTER_CODE", "")   # 4자리 마스터 코드 (secrets에 저장)
+
+def get_api_key() -> str:
+    """사용할 DART API 키 반환.
+    우선순위: 마스터코드 인증 → 사용자 직접 입력 키
+    """
+    if st.session_state.get("_master_auth"):
+        return _OWNER_API_KEY
+    return st.session_state.get("_user_api_key", "")
 BASE_URL = "https://opendart.fss.or.kr/api"
 
 REPORT_TYPES = {
@@ -1014,7 +1023,7 @@ def load_corp_codes() -> pd.DataFrame:
         with open(_bundle, encoding="utf-8") as f:
             return pd.DataFrame(json.load(f))
     # 2순위: DART API 직접 호출 (로컬 실행 또는 파일 없을 때)
-    r = requests.get(f"{BASE_URL}/corpCode.xml", params={"crtfc_key": API_KEY}, timeout=30)
+    r = requests.get(f"{BASE_URL}/corpCode.xml", params={"crtfc_key": get_api_key()}, timeout=30)
     r.raise_for_status()
     z = zipfile.ZipFile(BytesIO(r.content))
     root = ET.fromstring(z.read("CORPCODE.xml"))
@@ -1044,12 +1053,14 @@ def search_company(query: str, corp_df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_financials(corp_code: str, year: int, reprt_code: str) -> pd.DataFrame:
+def fetch_financials(corp_code: str, year: int, reprt_code: str,
+                     api_key: str = "") -> pd.DataFrame:
+    key = api_key or _DEFAULT_API_KEY
     for fs_div in ("CFS", "OFS"):
         time.sleep(THROTTLE_SEC)
         r = requests.get(
             f"{BASE_URL}/fnlttSinglAcntAll.json",
-            params={"crtfc_key": API_KEY, "corp_code": corp_code,
+            params={"crtfc_key": key, "corp_code": corp_code,
                     "bsns_year": str(year), "reprt_code": reprt_code, "fs_div": fs_div},
             timeout=15,
         )
@@ -1077,7 +1088,7 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
 
     for i, year in enumerate(years):
         progress.progress(i / len(years), text=f"{year}년 재무제표 수집 중...")
-        df = fetch_financials(corp_code, year, reprt_code)
+        df = fetch_financials(corp_code, year, reprt_code, api_key=get_api_key())
         if not df.empty:
             all_frames.append(df)
 
@@ -1345,106 +1356,183 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
 def inject_css():
     st.markdown("""
     <style>
-    /* 상단 Streamlit 툴바/햄버거 메뉴 숨김 */
-    #MainMenu, header, footer { visibility: hidden; }
+    /* ── 기본 리셋: 툴바·푸터만 숨기고 사이드바 토글은 유지 ── */
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    /* Streamlit 상단 툴바 (Deploy, Settings 등) 숨김 */
+    [data-testid="stToolbar"] { visibility: hidden; }
+    /* 상단 헤더 여백 제거 */
+    [data-testid="stHeader"] { background: transparent; }
 
-    /* 전체 여백 */
-    .block-container { padding: 2.5rem 2rem 4rem; max-width: 780px; }
+    /* ── 사이드바 열기/닫기 버튼 강제 표시 ── */
+    [data-testid="stSidebarCollapseButton"],
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapsedControl"] {
+        visibility: visible !important;
+        opacity: 1 !important;
+        display: flex !important;
+        pointer-events: auto !important;
+    }
+    /* 사이드바 내부 닫기 버튼 */
+    section[data-testid="stSidebar"] button[kind="header"],
+    section[data-testid="stSidebar"] > div:first-child > div > button {
+        visibility: visible !important;
+        opacity: 1 !important;
+        display: flex !important;
+        pointer-events: auto !important;
+        color: #0F172A !important;
+    }
 
-    /* 헤더 영역 */
+    /* ── 전체 컨테이너: 좌우 대칭 여백 + 고정 너비 ── */
+    .block-container {
+        padding: 3rem 3rem 5rem !important;
+        max-width: 720px !important;
+    }
+
+    /* ── 앱 헤더 ── */
     .app-header {
-        padding: 2rem 0 1.5rem;
-        border-bottom: 1px solid #E2E8F0;
+        padding: 1.5rem 0 1.25rem;
+        border-bottom: 2px solid #E2E8F0;
         margin-bottom: 2rem;
     }
     .app-header h1 {
-        font-size: 1.6rem;
-        font-weight: 700;
+        font-size: 1.75rem;
+        font-weight: 800;
         color: #0F172A;
-        margin: 0 0 0.25rem;
-        letter-spacing: -0.02em;
+        margin: 0 0 0.3rem;
+        letter-spacing: -0.03em;
     }
     .app-header p {
-        font-size: 0.875rem;
-        color: #64748B;
+        font-size: 0.85rem;
+        color: #94A3B8;
         margin: 0;
     }
 
-    /* 섹션 카드 */
+    /* ── 검색 카드 ── */
     .card {
         background: #F8FAFC;
         border: 1px solid #E2E8F0;
-        border-radius: 10px;
-        padding: 1.5rem;
-        margin-bottom: 1.25rem;
+        border-radius: 12px;
+        padding: 1.5rem 1.5rem 0.5rem;
+        margin-bottom: 1.5rem;
     }
     .card-title {
-        font-size: 0.7rem;
-        font-weight: 600;
-        letter-spacing: 0.08em;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
         color: #94A3B8;
-        margin-bottom: 1rem;
+        margin-bottom: 0.85rem;
     }
 
-    /* 기업 정보 배지 */
+    /* ── 기업 정보 배지 ── */
     .corp-badge {
-        display: inline-flex;
+        display: flex;
         align-items: center;
         gap: 0.5rem;
         background: #EFF6FF;
         border: 1px solid #BFDBFE;
-        border-radius: 8px;
-        padding: 0.6rem 1rem;
-        margin-bottom: 1rem;
-        width: 100%;
+        border-radius: 10px;
+        padding: 0.65rem 1.1rem;
+        margin: 0.5rem 0 1rem;
     }
     .corp-name { font-size: 1rem; font-weight: 700; color: #1E40AF; }
     .corp-meta { font-size: 0.8rem; color: #3B82F6; }
-    .corp-tag  {
-        font-size: 0.7rem; font-weight: 600;
+    .corp-tag {
+        font-size: 0.68rem; font-weight: 700;
         background: #DBEAFE; color: #1D4ED8;
         padding: 0.15rem 0.5rem; border-radius: 4px;
     }
 
-    /* 다운로드 버튼 재스타일 */
+    /* ── 다운로드 버튼 ── */
     [data-testid="stDownloadButton"] button {
         background: #2563EB !important;
         color: white !important;
         border: none !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        padding: 0.6rem 1.2rem !important;
-        font-size: 0.9rem !important;
+        border-radius: 10px !important;
+        font-weight: 700 !important;
+        font-size: 0.95rem !important;
+        padding: 0.65rem 1.5rem !important;
         transition: background 0.15s !important;
+        width: 100% !important;
     }
     [data-testid="stDownloadButton"] button:hover {
         background: #1D4ED8 !important;
     }
 
-    /* 제출 버튼 */
+    /* ── 제출 버튼 ── */
     [data-testid="stFormSubmitButton"] button {
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        font-size: 0.9rem !important;
+        border-radius: 10px !important;
+        font-weight: 700 !important;
+        font-size: 0.95rem !important;
     }
 
-    /* input / selectbox 테두리 */
+    /* ── input / selectbox ── */
     [data-baseweb="input"] > div,
     [data-baseweb="select"] > div:first-child {
         border-radius: 8px !important;
     }
 
-    /* 구분선 */
-    hr { border: none; border-top: 1px solid #E2E8F0; margin: 1.5rem 0; }
+    /* ── 구분선 ── */
+    hr { border: none; border-top: 1px solid #E2E8F0; margin: 1.25rem 0; }
     </style>
     """, unsafe_allow_html=True)
 
 
 # ── UI ───────────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="DARTSHEET", page_icon=None, layout="centered")
+st.set_page_config(page_title="DARTSHEET", page_icon=None, layout="centered",
+                   initial_sidebar_state="expanded")
 inject_css()
+
+# ── 사이드바: API 키 인증 ─────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("### 🔑 API 키 설정")
+
+    # ── 마스터 코드 (4자리) ──
+    st.caption("마스터 코드")
+    _code_input = st.text_input(
+        "마스터 코드",
+        max_chars=4,
+        type="password",
+        placeholder="4자리 코드",
+        label_visibility="collapsed",
+        key="_code_input",
+    )
+    if _code_input and _MASTER_CODE and _code_input == _MASTER_CODE:
+        st.session_state["_master_auth"] = True
+    elif _code_input:
+        st.session_state["_master_auth"] = False
+
+    if st.session_state.get("_master_auth"):
+        st.success("✓ 인증됨 — 공용 키 사용 중")
+        if st.button("초기화", use_container_width=True):
+            st.session_state["_master_auth"] = False
+            st.rerun()
+    else:
+        # ── 개인 DART API 키 ──
+        st.markdown("---")
+        st.caption("또는 본인 DART API 키 직접 입력")
+        st.markdown(
+            "<small><a href='https://opendart.fss.or.kr/uat/uia/easyLogin.do' target='_blank'>"
+            "키 발급 → opendart.fss.or.kr</a></small>",
+            unsafe_allow_html=True,
+        )
+        _key_input = st.text_input(
+            "DART API 키",
+            value=st.session_state.get("_user_api_key", ""),
+            type="password",
+            placeholder="40자리 API 키",
+            label_visibility="collapsed",
+        )
+        if _key_input.strip():
+            st.session_state["_user_api_key"] = _key_input.strip()
+            st.success("✓ 개인 키 사용 중")
+            if st.button("초기화", use_container_width=True, key="_clear_key"):
+                st.session_state.pop("_user_api_key", None)
+                st.rerun()
+        else:
+            st.session_state.pop("_user_api_key", None)
 
 st.markdown("""
 <div class="app-header">
@@ -1460,6 +1548,11 @@ with st.spinner("DART 기업 목록 초기화 중..."):
     except Exception as e:
         st.error(f"DART 기업 목록 로드 실패: {e}")
         st.stop()
+
+# API 키 없으면 검색 불가
+if not get_api_key():
+    st.warning("← 왼쪽 사이드바에서 마스터 코드 또는 DART API 키를 입력해주세요.")
+    st.stop()
 
 # 검색 폼
 st.markdown('<div class="card"><div class="card-title">기업 검색</div>', unsafe_allow_html=True)
