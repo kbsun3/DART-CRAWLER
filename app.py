@@ -1285,6 +1285,16 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         except Exception as _cfo_err:
             ws_cfo.cell(row=2, column=2, value=f"[CFO 시트 생성 오류] {_cfo_err}")
 
+        # ── 시트 순서 조정: Cash Flow Overview → 원본데이터 바로 다음 ──────
+        _wb = writer.book
+        try:
+            _cfo_ws = _wb["Cash Flow Overview"]
+            _wb._sheets.remove(_cfo_ws)
+            _raw_idx = _wb.sheetnames.index("원본데이터")
+            _wb._sheets.insert(_raw_idx + 1, _cfo_ws)
+        except Exception:
+            pass  # 순서 조정 실패해도 시트 내용에는 영향 없음
+
     except Exception as _wb_err:
         # with 블록 자체의 예외 (ExcelWriter 초기화 실패 등)
         # → 빈 워크북 하나 만들어서 에러 메시지 기록 후 반환
