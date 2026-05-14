@@ -581,10 +581,10 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
                                   ["TradeAndOtherCurrentPayables", "TradeAndOtherPayables",
                                    "TradePayables", "CurrentTradePayables"],
                                   year_cols, nm_fallbacks=["매입채무"])
-    ppe,  _        = _cfo_extract(raw, "CF",
-                                  ["PurchaseOfPropertyPlantAndEquipment"], year_cols)
-    intan, _       = _cfo_extract(raw, "CF",
-                                  ["PurchaseOfIntangibleAssets"], year_cols)
+    ppe,   ppe_dnm   = _cfo_extract(raw, "CF",
+                                    ["PurchaseOfPropertyPlantAndEquipment"], year_cols)
+    intan, intan_dnm = _cfo_extract(raw, "CF",
+                                    ["PurchaseOfIntangibleAssets"], year_cols)
     capex = _cfo_add(ppe, intan, year_cols)
 
     def yr_vals(d: dict) -> list:
@@ -615,20 +615,57 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
         result = []
         for yr in year_cols:
-            py_val = values.get(yr)
-            if py_val is not None:
-                # Python 추출값 우선 — FS 수식 참조보다 신뢰성 높음
-                result.append(py_val)
-            elif resolved:
+            if resolved:
                 sheet_nm, row, fs_yrs = resolved
                 if yr in fs_yrs:
-                    # Python 값 없을 때만 FS 시트 수식 참조 (fallback)
+                    # 1순위: FS 시트 수식 참조 (재무제표와 연동)
                     c = get_column_letter(CB + 1 + fs_yrs.index(yr))
                     result.append(f"=IF('{sheet_nm}'!{c}{row}=\"\",\"\",'{sheet_nm}'!{c}{row})")
-                else:
-                    result.append(None)
+                    continue
+            # 2순위: FS 행을 못 찾을 때만 Python 추출값 직접 기입
+            py_val = values.get(yr)
+            result.append(py_val)
+        return result
+
+    def _nwc_bal_vals(values: dict, found_dnm: dict,
+                      fs_code: str, nm_keywords: list) -> list:
+        """NWC Balance 행 값 생성.
+
+        1순위: Python 추출값 (values dict)
+        2순위: 정확한 display_nm 매칭으로 FS 시트 수식 참조 (_ref_vals_simple 방식)
+        3순위: nm_keywords 키워드로 FS 시트 행 스캔 (완전 fallback)
+
+        이 세 단계를 거쳐야 blank cell 없이 CCC 계산이 가능함.
+        """
+        row_map  = (fs_row_maps  or {}).get(fs_code, {})
+        sheet_nm = (fs_sheet_names or {}).get(fs_code, "")
+        fs_yrs   = (fs_year_maps or {}).get(fs_code, [])
+
+        # 2순위: 정확한 display_nm 매칭
+        dnm      = next((v for v in found_dnm.values() if v is not None), None)
+        exact_r  = (row_map.get(dnm) if (dnm and row_map) else None)
+
+        # 3순위: 키워드 기반 스캔 (2순위 실패 시)
+        kw_r = None
+        if exact_r is None and row_map:
+            for nm, r in row_map.items():
+                if any(kw in nm for kw in nm_keywords):
+                    kw_r = r
+                    break
+
+        result = []
+        for yr in year_cols:
+            fs_r = exact_r if exact_r else kw_r
+            if fs_r and yr in fs_yrs:
+                # 1순위: FS 시트 수식 참조 (재무상태표와 연동)
+                c = get_column_letter(CB + 1 + fs_yrs.index(yr))
+                result.append(
+                    f"=IF('{sheet_nm}'!{c}{fs_r}=\"\",\"\","
+                    f"'{sheet_nm}'!{c}{fs_r})"
+                )
             else:
-                result.append(None)
+                # 2순위: FS 행 못 찾을 때 Python 추출값
+                result.append(values.get(yr))
         return result
 
     prior_yr = year_cols[0] - 1 if year_cols else None
@@ -698,6 +735,8 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         "inv_bal_prior": 48,
         "ap_bal_prior":  49,
         "cogs_hidden":   50,  # COGS 숨김 행 (DIO/DPO 수식 참조용)
+        "ppe_hidden":    51,  # PPE 취득 숨김 행 (CF 참조)
+        "intan_hidden":  52,  # 무형자산 취득 숨김 행 (CF 참조)
     }
 
     # ── 타이틀 ───────────────────────────────────────────────────────────────
@@ -817,7 +856,20 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         _w(R["capex_hdr"], c, fill=_F_YELLOW)
     ws.row_dimensions[R["capex_hdr"]].height = 17
 
-    _row(R["capex_tot"], "  Total CAPEX", font=_FT_BOLD, vals=yr_vals(capex))
+    # PPE·무형자산 숨김 행 → CF 시트 참조 (가능 시) or Python 값
+    _row(R["ppe_hidden"],   "", fill=_F_WHITE, font=_FT_HIDDEN,
+         vals=_ref_vals_simple(ppe,   ppe_dnm,   "CF"), val_font=_FT_HIDDEN)
+    _row(R["intan_hidden"], "", fill=_F_WHITE, font=_FT_HIDDEN,
+         vals=_ref_vals_simple(intan, intan_dnm, "CF"), val_font=_FT_HIDDEN)
+    ws.row_dimensions[R["ppe_hidden"]].height   = 0
+    ws.row_dimensions[R["intan_hidden"]].height = 0
+
+    # Total CAPEX = PPE + 무형자산 (in-sheet 수식)
+    _formula_row(R["capex_tot"], "  Total CAPEX",
+                 f"=IF(AND({{c}}{R['ppe_hidden']}=\"\",{{c}}{R['intan_hidden']}=\"\"),\"\","
+                 f"IF({{c}}{R['ppe_hidden']}=\"\",0,{{c}}{R['ppe_hidden']})"
+                 f"+IF({{c}}{R['intan_hidden']}=\"\",0,{{c}}{R['intan_hidden']}))",
+                 font=_FT_BOLD)
     # Maintenance / Expansion — 수동 입력 (파란색)
     _w(R["capex_maint"], CB, "    ㄴ Maintenance CAPEX", _F_WHITE, _FT_GREY_NRM, _AL_L)
     _w(R["capex_exp"],   CB, "    ㄴ Expansion CAPEX",   _F_WHITE, _FT_GREY_NRM, _AL_L)
@@ -852,13 +904,14 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     _w(R["nwc_bal_cat"], CB, "[NWC Balance]", _F_WHITE, _FT_GREY_BLD, _AL_L)
     ws.row_dimensions[R["nwc_bal_cat"]].height = 17
 
-    # NWC Balance: BS 시트 참조 수식 (가능 시) → NWC Movement가 이 셀들을 참조
+    # NWC Balance: Python 값 → 정확한 display_nm → 키워드 스캔 순으로 fallback
+    # _nwc_bal_vals 는 3단계 fallback으로 가장 robust한 방법
     _row(R["ar_bal"],  "  매출채권", font=_FT_NORM,
-         vals=_ref_vals_simple(ar,  ar_dnm,  "BS"))
+         vals=_nwc_bal_vals(ar,  ar_dnm,  "BS", ["매출채권", "receivable", "Receivable"]))
     _row(R["inv_bal"], "  재고자산", font=_FT_NORM,
-         vals=_ref_vals_simple(inv, inv_dnm, "BS"))
+         vals=_nwc_bal_vals(inv, inv_dnm, "BS", ["재고자산", "nventor", "Inventor"]))
     _row(R["ap_bal"],  "  매입채무", font=_FT_NORM,
-         vals=_ref_vals_simple(ap,  ap_dnm,  "BS"))
+         vals=_nwc_bal_vals(ap,  ap_dnm,  "BS", ["매입채무", "payable",  "Payable"]))
     _blank(R["blank8"])
 
     _w(R["ccc_cat"], CB, "[Cash Conversion Cycle (days)]", _F_WHITE, _FT_GREY_BLD, _AL_L)
@@ -878,14 +931,18 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
         ws.row_dimensions[cogs_row].height = 0  # 행 높이 0 (완전 숨김)
         denom_row = cogs_row
 
+    # DSO/DIO/DPO: balance 셀도 빈값 체크 추가 → #VALUE! 방지
     _formula_row(R["dso"], "  DSO (매출채권 회수일수)",
-                 f"=IF(AND({{c}}{R['rev']}<>\"\",{{c}}{R['rev']}<>0),{{c}}{R['ar_bal']}/{{c}}{R['rev']}*365,\"\")",
+                 f"=IF(AND({{c}}{R['rev']}<>\"\",{{c}}{R['rev']}<>0,"
+                 f"{{c}}{R['ar_bal']}<>\"\"),{{c}}{R['ar_bal']}/{{c}}{R['rev']}*365,\"\")",
                  font=_FT_NORM, fmt="0.0")
     _formula_row(R["dio"], "  DIO (재고 회전일수)",
-                 f"=IF(AND({{c}}{denom_row}<>\"\",{{c}}{denom_row}<>0),{{c}}{R['inv_bal']}/{{c}}{denom_row}*365,\"\")",
+                 f"=IF(AND({{c}}{denom_row}<>\"\",{{c}}{denom_row}<>0,"
+                 f"{{c}}{R['inv_bal']}<>\"\"),{{c}}{R['inv_bal']}/{{c}}{denom_row}*365,\"\")",
                  font=_FT_NORM, fmt="0.0")
     _formula_row(R["dpo"], "  DPO (매입채무 지급일수)",
-                 f"=IF(AND({{c}}{denom_row}<>\"\",{{c}}{denom_row}<>0),{{c}}{R['ap_bal']}/{{c}}{denom_row}*365,\"\")",
+                 f"=IF(AND({{c}}{denom_row}<>\"\",{{c}}{denom_row}<>0,"
+                 f"{{c}}{R['ap_bal']}<>\"\"),{{c}}{R['ap_bal']}/{{c}}{denom_row}*365,\"\")",
                  font=_FT_NORM, fmt="0.0", border_bot=_S_THIN)
     _blank(R["blank9"])
     _formula_row(R["ccc"], "CCC (DSO + DIO - DPO)",
@@ -918,25 +975,22 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
     # ① D&A — 입력 행(row 11) 바로 옆
     _gw(R["da"],
-        "① 여기에 D&A 입력  (감가상각+상각비 합산)\n"
-        "   현금흐름표 영업CF 조정항목 참조",
-        fill=_GF_IN, font=_GT_IN, height=32)
+        "① D&A 입력 — 감가상각+상각비 합산 (현금흐름표 영업CF 조정항목 참조)",
+        fill=_GF_IN, font=_GT_IN, height=20)
 
     # ② Maintenance CAPEX — 입력 행(row 26) 바로 옆
     _gw(R["capex_maint"],
-        "② 여기에 Maintenance CAPEX 입력\n"
-        "   기존 설비 유지·교체 투자금",
-        fill=_GF_IN, font=_GT_IN, height=30)
+        "② Maintenance CAPEX 입력 — 기존 설비 유지·교체 투자금",
+        fill=_GF_IN, font=_GT_IN, height=20)
 
     # ③ Expansion CAPEX — 입력 행(row 27) 바로 옆
     _gw(R["capex_exp"],
-        "③ 여기에 Expansion CAPEX 입력\n"
-        "   = Total CAPEX − ②",
-        fill=_GF_IN, font=_GT_IN, height=30)
+        "③ Expansion CAPEX 입력 — Total CAPEX 에서 ② 를 뺀 금액",
+        fill=_GF_IN, font=_GT_IN, height=20)
 
     # 가이드 열 너비 — 내용에 맞게 조정
     ws.column_dimensions[get_column_letter(LAST + 1)].width = 1   # 여백
-    ws.column_dimensions[get_column_letter(GC)].width = 34
+    ws.column_dimensions[get_column_letter(GC)].width = 56
 
     # ── 열 너비 / 틀 고정 ─────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 2
@@ -1420,57 +1474,84 @@ with st.form("main_form"):
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ── 검색 & Excel 생성 ────────────────────────────────────────────────────────
-# 폼 제출 시에만 Excel을 빌드하고 session_state에 저장.
-# 다운로드 버튼은 아래 별도 섹션에서 항상 렌더링 — rerun 시에도 유지됨.
+# [구조]
+# 1) 폼 제출(submitted=True) 시 → 검색 결과·파라미터를 session_state에 저장
+# 2) selectbox 선택 rerun 포함 모든 rerun에서 → session_state 기반으로 UI 표시 & Excel 빌드
+# → selectbox 선택 시 submitted=False가 되어도 build_excel이 올바르게 호출됨
+
 if submitted and query.strip():
     results = search_company(query.strip(), corp_df)
-
     if results.empty:
         st.error("검색 결과가 없습니다. 회사명을 다시 확인해주세요.")
+        st.session_state.pop("_search_state", None)
         st.stop()
-
-    if len(results) > 1:
-        options = [
-            f"{row['corp_name']}  ·  {row['stock_code'] or '비상장'}"
-            for _, row in results.head(10).iterrows()
-        ]
-        choice_idx = st.selectbox("검색된 기업 선택", range(len(options)),
-                                   format_func=lambda i: options[i])
-        selected = results.iloc[choice_idx]
-    else:
-        selected = results.iloc[0]
-
-    corp_code  = selected["corp_code"]
-    corp_name  = selected["corp_name"]
-    stock_code = selected["stock_code"]
     years      = list(range(int(end_year) - int(num_years) + 1, int(end_year) + 1))
     reprt_code = REPORT_TYPES[report_type]
-    year_range = f"{years[0]} – {years[-1]}"
-
-    st.markdown(f"""
-    <div class="corp-badge">
-      <span class="corp-name">{corp_name}</span>
-      <span class="corp-tag">{stock_code or "비상장"}</span>
-      <span class="corp-meta">· {year_range} · {report_type.split()[0]}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    try:
-        excel_bytes = build_excel(corp_code, corp_name, stock_code, years, reprt_code)
-        st.session_state["_excel_bytes"]    = excel_bytes
-        st.session_state["_excel_filename"] = f"{corp_name}_재무제표_{years[0]}-{years[-1]}.xlsx"
-        st.session_state["_excel_meta"]     = (year_range, num_years, report_type.split()[0])
-    except Exception as _build_err:
-        st.error(f"Excel 생성 오류: {_build_err}")
-        st.exception(_build_err)
-        st.session_state.pop("_excel_bytes", None)
+    # 결과·파라미터 저장 — selectbox rerun 시에도 유지됨
+    st.session_state["_search_state"] = {
+        "results":     results.head(10).to_dict("records"),
+        "years":       years,
+        "reprt_code":  reprt_code,
+        "report_type": report_type,
+        "num_years":   num_years,
+    }
+    # 새 검색 시 이전 Excel 파일 초기화
+    st.session_state.pop("_excel_bytes", None)
+    st.session_state.pop("_built_key",   None)
 
 elif submitted:
     st.warning("회사명 또는 종목코드를 입력해주세요.")
 
-# ── 다운로드 버튼 (if submitted 바깥 — rerun 후에도 항상 렌더링) ─────────────
-# 다운로드 버튼 클릭 시 Streamlit이 rerun하면 submitted=False가 되므로,
-# session_state 확인을 if submitted 밖에서 독립적으로 수행해야 파일이 서빙됨.
+# ── 검색 결과 UI + Excel 빌드 (session_state 기반, 모든 rerun에서 실행) ──────
+if "_search_state" in st.session_state:
+    _ss        = st.session_state["_search_state"]
+    _results   = pd.DataFrame(_ss["results"])
+    _years     = _ss["years"]
+    _reprt     = _ss["reprt_code"]
+    _rtype_lbl = _ss["report_type"]
+    _n_yr      = _ss["num_years"]
+
+    if len(_results) > 1:
+        _options = [
+            f"{r['corp_name']}  ·  {r['stock_code'] or '비상장'}"
+            for r in _ss["results"]
+        ]
+        _choice = st.selectbox("검색된 기업 선택", range(len(_options)),
+                               format_func=lambda i: _options[i],
+                               key="_corp_choice")
+        _sel = _results.iloc[_choice]
+    else:
+        _sel = _results.iloc[0]
+
+    _corp_code  = _sel["corp_code"]
+    _corp_name  = _sel["corp_name"]
+    _stock_code = _sel["stock_code"]
+    _year_range = f"{_years[0]} – {_years[-1]}"
+
+    st.markdown(f"""
+    <div class="corp-badge">
+      <span class="corp-name">{_corp_name}</span>
+      <span class="corp-tag">{_stock_code or "비상장"}</span>
+      <span class="corp-meta">· {_year_range} · {_rtype_lbl.split()[0]}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # _excel_bytes 없을 때만 재생성
+    # (새 검색 시 submitted 블록에서 pop → 여기서 재빌드 / 다운로드 rerun은 bytes 있으므로 스킵)
+    if "_excel_bytes" not in st.session_state:
+        try:
+            _excel_bytes = build_excel(_corp_code, _corp_name, _stock_code, _years, _reprt)
+            st.session_state["_excel_bytes"]    = _excel_bytes
+            st.session_state["_excel_filename"] = (
+                f"{_corp_name}_재무제표_{_years[0]}-{_years[-1]}.xlsx"
+            )
+            st.session_state["_excel_meta"] = (_year_range, _n_yr, _rtype_lbl.split()[0])
+        except Exception as _build_err:
+            st.error(f"Excel 생성 오류: {_build_err}")
+            st.exception(_build_err)
+            st.session_state.pop("_excel_bytes", None)
+
+# ── 다운로드 버튼 (항상 렌더링 — session_state 기반) ────────────────────────
 _dl_bytes = st.session_state.get("_excel_bytes")
 if _dl_bytes:
     _yr_range, _n_yr, _rtype = st.session_state.get(
