@@ -2074,16 +2074,27 @@ with _hcol1:
     </div>
     """, unsafe_allow_html=True)
 with _hcol2:
-    st.markdown("""
-    <div style="padding-top:1.7rem; text-align:right;">
-      <a href="?logout=1" style="
-        background:#EF4444; color:white; text-decoration:none;
-        border-radius:5px; font-size:0.6rem; font-weight:600;
-        padding:0.18rem 0.45rem; white-space:nowrap; line-height:1;
-        display:inline-block;
-      ">로그아웃</a>
-    </div>
-    """, unsafe_allow_html=True)
+    # Streamlit은 모든 <a> 클릭을 React Router가 가로채 새 탭으로 염.
+    # components.html iframe 안에서 window.parent.location 직접 조작하면
+    # React 라우터를 우회하여 같은 탭 내 이동 가능.
+    import streamlit.components.v1 as _cmp
+    _cmp.html(
+        """<div style="padding-top:1.5rem;text-align:right;
+                       font-family:'맑은 고딕',sans-serif;">
+          <a onclick="window.parent.location.href=
+                        window.parent.location.pathname+'?logout=1';
+                      return false;"
+             href="javascript:void(0)"
+             style="background:#EF4444;color:white;text-decoration:none;
+                    border-radius:5px;font-size:0.6rem;font-weight:600;
+                    padding:0.18rem 0.45rem;white-space:nowrap;
+                    line-height:1;display:inline-block;cursor:pointer;">
+            로그아웃
+          </a>
+        </div>""",
+        height=36,
+        scrolling=False,
+    )
 
 # 기업코드 목록 로드
 with st.spinner("DART 기업 목록 초기화 중..."):
