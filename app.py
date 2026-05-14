@@ -1373,7 +1373,7 @@ def inject_css():
 
     /* ── 전체 컨테이너: 좌우 대칭 여백 + 고정 너비 ── */
     .block-container {
-        padding: 3rem 3rem 5rem !important;
+        padding: 1rem 3rem 5rem !important;
         max-width: 720px !important;
     }
 
@@ -1482,16 +1482,12 @@ _api_ready = (
 # ── 로그인 페이지 ─────────────────────────────────────────────────────────────
 if not _api_ready:
     st.markdown("""
-    <div style="min-height:30vh; display:flex; align-items:center; justify-content:center;">
-    </div>
-    <div style="max-width:400px; margin:0 auto;">
-      <div style="text-align:center; margin-bottom:2rem;">
-        <div style="font-size:2rem; font-weight:900; letter-spacing:-0.04em; color:#0F172A;">
-          DARTSHEET
-        </div>
-        <div style="font-size:0.85rem; color:#94A3B8; margin-top:0.4rem;">
-          국내 상장사 재무제표 자동 수집
-        </div>
+    <div style="text-align:center; padding: 3rem 0 2rem;">
+      <div style="font-size:2rem; font-weight:900; letter-spacing:-0.04em; color:#0F172A;">
+        DARTSHEET
+      </div>
+      <div style="font-size:0.85rem; color:#94A3B8; margin-top:0.4rem;">
+        국내 상장사 재무제표 자동 수집
       </div>
     </div>
     """, unsafe_allow_html=True)
