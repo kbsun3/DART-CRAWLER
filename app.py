@@ -1569,7 +1569,7 @@ with _hcol2:
     st.markdown("""
     <div style="padding-top:1.7rem; text-align:right;">
       <a href="." style="
-        background:#2563EB; color:white; text-decoration:none;
+        background:#EF4444; color:white; text-decoration:none;
         border-radius:5px; font-size:0.6rem; font-weight:600;
         padding:0.18rem 0.45rem; white-space:nowrap; line-height:1;
         display:inline-block;
