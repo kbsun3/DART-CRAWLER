@@ -16,7 +16,10 @@ _OWNER_API_KEY  = (
     os.environ.get("DART_API_KEY")
     or st.secrets.get("DART_API_KEY", "")
 )
-_MASTER_CODE = st.secrets.get("MASTER_CODE", "")   # 4자리 마스터 코드 (secrets에 저장)
+_MASTER_CODE = (
+    os.environ.get("MASTER_CODE")
+    or st.secrets.get("MASTER_CODE", "")
+)
 
 def get_api_key() -> str:
     """사용할 DART API 키 반환.
