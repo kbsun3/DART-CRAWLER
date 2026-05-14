@@ -1842,8 +1842,8 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         # ── 시트 순서 조정 ──────────────────────────────────────────────────
         # 목표 순서: 정보 | Cash Flow Overview | 재무 요약 | BS | IS | CIS | CF | 원본데이터
         _wb = writer.book
-        _priority = ["정보", "원본데이터", "Cash Flow Overview", "재무 요약",
-                     "BS", "IS", "CIS", "CF"]
+        _priority = ["정보", "원본데이터", "재무 요약", "Cash Flow Overview",
+                     "IS", "BS", "CF", "CIS"]
         _existing_titles = {ws.title for ws in _wb.worksheets}
         _ordered = [_wb[t] for t in _priority if t in _existing_titles]
         # 위 목록에 없는 시트(SCE 등)는 CF 뒤, 원본데이터 앞에 삽입
