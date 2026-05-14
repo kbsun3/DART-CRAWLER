@@ -1455,22 +1455,13 @@ def inject_css():
         font-size: 0.95rem !important;
     }
 
-    /* ── 로그아웃 버튼 ── */
-    [data-testid="stButton"][key="_logout"] button,
-    button[data-testid="baseButton-secondary"][aria-label="로그아웃"],
-    div[data-testid="column"]:last-child div[data-testid="stButton"] button {
-        background: #EF4444 !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        font-size: 0.6rem !important;
-        font-weight: 600 !important;
-        padding: 0.15rem 0.35rem !important;
-        white-space: nowrap !important;
-        line-height: 1.2 !important;
-    }
-    div[data-testid="column"]:last-child div[data-testid="stButton"] button:hover {
-        background: #DC2626 !important;
+    /* ── 숨김 로그아웃 트리거 버튼 ── */
+    div[data-testid="column"]:last-child div[data-testid="stButton"] {
+        position: absolute;
+        width: 0; height: 0;
+        overflow: hidden;
+        opacity: 0;
+        pointer-events: none;
     }
 
     /* ── input / selectbox ── */
@@ -1571,14 +1562,28 @@ with _hcol1:
     </div>
     """, unsafe_allow_html=True)
 with _hcol2:
-    st.markdown("<div style='padding-top:1.6rem'>", unsafe_allow_html=True)
-    if st.button("로그아웃", key="_logout", use_container_width=True):
+    # 보이는 HTML 버튼 → 숨겨진 Streamlit 버튼 JS 트리거
+    st.markdown("""
+    <div style="padding-top:1.55rem; text-align:right;">
+      <button onclick="(function(){
+        var bs = window.parent.document.querySelectorAll('[data-testid=stButton] button');
+        for(var i=0;i<bs.length;i++){
+          if(bs[i].innerText.trim()==='__logout__'){bs[i].click();break;}
+        }
+      })()" style="
+        background:#EF4444; color:white; border:none; border-radius:6px;
+        font-size:0.65rem; font-weight:600; padding:0.22rem 0.55rem;
+        cursor:pointer; white-space:nowrap; line-height:1.3;
+      ">로그아웃</button>
+    </div>
+    """, unsafe_allow_html=True)
+    # 실제 동작하는 Streamlit 버튼 (숨김)
+    if st.button("__logout__", key="_logout"):
         st.session_state.pop("_master_auth", None)
         st.session_state.pop("_user_api_key", None)
         st.session_state.pop("_search_state", None)
         st.session_state.pop("_excel_bytes", None)
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
 # 기업코드 목록 로드
 with st.spinner("DART 기업 목록 초기화 중..."):
