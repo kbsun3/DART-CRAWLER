@@ -1574,7 +1574,6 @@ with st.spinner("DART 기업 목록 초기화 중..."):
         st.stop()
 
 # 검색 폼
-st.markdown('<div class="card"><div class="card-title">기업 검색</div>', unsafe_allow_html=True)
 with st.form("main_form"):
     query = st.text_input(
         "회사명 또는 종목코드",
@@ -1595,7 +1594,6 @@ with st.form("main_form"):
         report_type = st.selectbox("보고서 종류", list(REPORT_TYPES.keys()))
 
     submitted = st.form_submit_button("검색 및 수집", use_container_width=True, type="primary")
-st.markdown('</div>', unsafe_allow_html=True)
 
 # ── 검색 & Excel 생성 ────────────────────────────────────────────────────────
 # [구조]
