@@ -1976,6 +1976,27 @@ def inject_css():
 
     /* ── 구분선 ── */
     hr { border: none; border-top: 1px solid #E2E8F0; margin: 1.25rem 0; }
+
+    /* ── 로그아웃 버튼: 헤더 첫 번째 column row의 마지막 컬럼 안 버튼 ── */
+    [data-testid="stHorizontalBlock"]:first-of-type
+    [data-testid="column"]:last-child button {
+        background: #EF4444 !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 5px !important;
+        font-size: 0.65rem !important;
+        font-weight: 600 !important;
+        padding: 0.2rem 0.55rem !important;
+        min-height: unset !important;
+        height: auto !important;
+        line-height: 1.6 !important;
+        margin-top: 1.4rem;
+        width: auto !important;
+    }
+    [data-testid="stHorizontalBlock"]:first-of-type
+    [data-testid="column"]:last-child button:hover {
+        background: #DC2626 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -2066,16 +2087,10 @@ with _hcol1:
     </div>
     """, unsafe_allow_html=True)
 with _hcol2:
-    st.markdown("""
-    <div style="padding-top:1.7rem; text-align:right;">
-      <a href="." style="
-        background:#EF4444; color:white; text-decoration:none;
-        border-radius:5px; font-size:0.6rem; font-weight:600;
-        padding:0.18rem 0.45rem; white-space:nowrap; line-height:1;
-        display:inline-block;
-      ">로그아웃</a>
-    </div>
-    """, unsafe_allow_html=True)
+    if st.button("로그아웃", key="_btn_logout"):
+        st.session_state.pop("_master_auth", None)
+        st.session_state.pop("_user_api_key", None)
+        st.rerun()
 
 # 기업코드 목록 로드
 with st.spinner("DART 기업 목록 초기화 중..."):
