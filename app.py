@@ -1455,21 +1455,6 @@ def inject_css():
         font-size: 0.95rem !important;
     }
 
-    /* ── 로그아웃 버튼 (헤더 두 번째 컬럼) ── */
-    div[data-testid="stHorizontalBlock"] div[data-testid="stColumn"]:last-child button,
-    div[data-testid="stHorizontalBlock"] div[data-testid="column"]:last-child button {
-        background: #EF4444 !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 6px !important;
-        font-size: 0.58rem !important;
-        font-weight: 600 !important;
-        padding: 0.12rem 0.4rem !important;
-        white-space: nowrap !important;
-        min-height: unset !important;
-        height: auto !important;
-        line-height: 1.3 !important;
-    }
 
     /* ── input / selectbox ── */
     [data-baseweb="input"] > div,
@@ -1569,14 +1554,16 @@ with _hcol1:
     </div>
     """, unsafe_allow_html=True)
 with _hcol2:
-    st.markdown("<div style='padding-top:1.55rem'>", unsafe_allow_html=True)
-    if st.button("로그아웃", key="_logout", use_container_width=True):
-        st.session_state.pop("_master_auth", None)
-        st.session_state.pop("_user_api_key", None)
-        st.session_state.pop("_search_state", None)
-        st.session_state.pop("_excel_bytes", None)
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="padding-top:1.7rem; text-align:right;">
+      <a href="." style="
+        background:#EF4444; color:white; text-decoration:none;
+        border-radius:5px; font-size:0.6rem; font-weight:600;
+        padding:0.18rem 0.45rem; white-space:nowrap; line-height:1;
+        display:inline-block;
+      ">로그아웃</a>
+    </div>
+    """, unsafe_allow_html=True)
 
 # 기업코드 목록 로드
 with st.spinner("DART 기업 목록 초기화 중..."):
