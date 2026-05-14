@@ -1443,12 +1443,12 @@ def inject_css():
 
 # ── UI ───────────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="DART 재무제표", page_icon="📋", layout="centered")
+st.set_page_config(page_title="DARTSHEET", page_icon=None, layout="centered")
 inject_css()
 
 st.markdown("""
 <div class="app-header">
-  <h1>📋 DART 재무제표 수집기</h1>
+  <h1>DARTSHEET</h1>
   <p>국내 상장사의 재무제표를 DART에서 자동으로 가져와 연도별 엑셀로 정리합니다.</p>
 </div>
 """, unsafe_allow_html=True)
@@ -1569,10 +1569,19 @@ if _dl_bytes:
     _yr_range, _n_yr, _rtype = st.session_state.get(
         "_excel_meta", ("–", "–", "–")
     )
-    c1, c2, c3 = st.columns(3)
-    c1.metric("수집 연도", _yr_range)
-    c2.metric("연수", f"{_n_yr}개년")
-    c3.metric("보고서", _rtype)
+    st.markdown(f"""
+    <div style="display:flex;gap:10px;margin:8px 0;">
+      <span style="background:#EFF6FF;color:#1E3A5F;padding:4px 12px;border-radius:6px;font-size:13px;">
+        📅 {_yr_range}
+      </span>
+      <span style="background:#EFF6FF;color:#1E3A5F;padding:4px 12px;border-radius:6px;font-size:13px;">
+        {_n_yr}개년
+      </span>
+      <span style="background:#EFF6FF;color:#1E3A5F;padding:4px 12px;border-radius:6px;font-size:13px;">
+        {_rtype}
+      </span>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.download_button(
