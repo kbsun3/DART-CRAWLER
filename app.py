@@ -960,18 +960,20 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     _GT_HDR  = Font(name="맑은 고딕", bold=True,  color="FFFFFF", size=10)
     _GT_IN   = Font(name="맑은 고딕",              color="1E3A5F", size=10)
     _GT_SUB  = Font(name="맑은 고딕", italic=True, color="4B5563", size=9)
-    _GT_AL   = Alignment(horizontal="left", vertical="center",
-                         wrap_text=True, indent=1)
+    _GT_AL     = Alignment(horizontal="left",   vertical="center",
+                           wrap_text=True, indent=1)
+    _GT_AL_CTR = Alignment(horizontal="center", vertical="center",
+                           wrap_text=False)
 
-    def _gw(r, text, fill=_GF_NONE, font=_GT_IN, height=None):
+    def _gw(r, text, fill=_GF_NONE, font=_GT_IN, height=None, align=None):
         cell = ws.cell(row=r, column=GC, value=text)
-        cell.fill, cell.font, cell.alignment = fill, font, _GT_AL
+        cell.fill, cell.font, cell.alignment = fill, font, align or _GT_AL
         if height:
             ws.row_dimensions[r].height = height
 
-    # 헤더 (타이틀 행)
+    # 헤더 (타이틀 행) — 가운데 정렬
     _gw(R["title"], "[입력 가이드]  파란 셀 3개만 직접 입력",
-        fill=_GF_HDR, font=_GT_HDR)
+        fill=_GF_HDR, font=_GT_HDR, align=_GT_AL_CTR)
 
     # ① D&A — 입력 행(row 11) 바로 옆
     _gw(R["da"],
@@ -990,7 +992,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
     # 가이드 열 너비 — 내용에 맞게 조정
     ws.column_dimensions[get_column_letter(LAST + 1)].width = 1   # 여백
-    ws.column_dimensions[get_column_letter(GC)].width = 56
+    ws.column_dimensions[get_column_letter(GC)].width = 80
 
     # ── 열 너비 / 틀 고정 ─────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 2
