@@ -1147,6 +1147,19 @@ def _write_summary_sheet(ws, raw: pd.DataFrame, corp_name: str,
         return out
 
     # ── FS 참조 수식 헬퍼 ────────────────────────────────────────────────────
+    def _fs_vals(found_dnm, fs_code, fallback_code=None, raw_fallback=None):
+        """연도별 FS 시트 참조 수식 리스트 반환.
+        수식 생성 불가(FS 시트에 행 없음)시 raw_fallback 값으로 대체."""
+        out = []
+        for yr in year_cols:
+            fml = _fs_ref_formula(found_dnm, fs_code, yr, fallback_code)
+            if fml:
+                out.append(fml)
+            else:
+                idx = year_cols.index(yr)
+                out.append(raw_fallback[idx] if raw_fallback is not None else None)
+        return out
+
     def _fs_ref_formula(found_dnm, fs_code, yr, fallback_code=None):
         """FS 시트 셀 참조 수식 (=IF(...)). 없으면 None."""
         def _resolve(code):
@@ -1339,9 +1352,9 @@ def _write_summary_sheet(ws, raw: pd.DataFrame, corp_name: str,
     # ── BS ──
     bs_ca_v,    bs_ca_dnm    = _get2("BS", ["CurrentAssets"],
                                           ["유동자산"])
-    bs_cash0_v, _            = _get2("BS", ["CashAndCashEquivalents"],
+    bs_cash0_v, bs_cash0_dnm = _get2("BS", ["CashAndCashEquivalents"],
                                           ["현금및현금성자산"])
-    bs_sti_v,   _            = _get2("BS", ["ShortTermInvestments",
+    bs_sti_v,   bs_sti_dnm   = _get2("BS", ["ShortTermInvestments",
                                              "ShorttermDeposits",
                                              "CurrentFinancialAssets"],
                                           ["단기투자자산","단기금융상품",
@@ -1378,7 +1391,7 @@ def _write_summary_sheet(ws, raw: pd.DataFrame, corp_name: str,
                                           ["부채총계"])
     bs_eq_v,    bs_eq_dnm    = _get2("BS", ["Equity"],
                                           ["자본총계"])
-    div_paid_v, _            = _get2("CF", ["DividendsPaidClassifiedAsFinancingActivities",
+    div_paid_v, _div_dnm     = _get2("CF", ["DividendsPaidClassifiedAsFinancingActivities",
                                              "DividendsPaid"],
                                           ["배당금지급"])
 
@@ -1400,30 +1413,30 @@ def _write_summary_sheet(ws, raw: pd.DataFrame, corp_name: str,
     # ── IS ──
     is_rev_v,   is_rev_dnm  = _get2("IS", ["Revenue","Sales"],
                                           ["매출","수익(매출액)"], "CIS")
-    is_cogs_v,  _           = _get2("IS", ["CostOfSales"],
+    is_cogs_v,  is_cogs_dnm  = _get2("IS", ["CostOfSales"],
                                           ["매출원가"],            "CIS")
     is_gp_v,    is_gp_dnm   = _get2("IS", ["GrossProfit"],
                                           ["매출총이익"],          "CIS")
     is_sga_v,   is_sga_dnm  = _get2("IS", ["SellingGeneralAndAdministrativeExpense",
                                             "SalesGeneralAndAdministrativeExpense"],
                                           ["판매비와관리비"],  "CIS")
-    is_emp_v,   _           = _get2("IS", ["EmployeeBenefitsExpense","WagesAndSalaries"],
+    is_emp_v,   is_emp_dnm   = _get2("IS", ["EmployeeBenefitsExpense","WagesAndSalaries"],
                                           ["인건비","급여"],   "CIS")
-    is_ga_v,    _           = _get2("IS", ["GeneralAndAdministrativeExpense"],
+    is_ga_v,    is_ga_dnm    = _get2("IS", ["GeneralAndAdministrativeExpense"],
                                           ["일반관리비"],      "CIS")
-    is_sell_v,  _           = _get2("IS", ["DistributionCosts","SellingExpense"],
+    is_sell_v,  is_sell_dnm  = _get2("IS", ["DistributionCosts","SellingExpense"],
                                           ["판매비"],          "CIS")
     is_op_v,    is_op_dnm   = _get2("IS", ["ProfitLossFromOperatingActivities",
                                             "OperatingIncomeLoss"],
                                           ["영업이익"],        "CIS")
-    is_tax_v,   _           = _get2("IS", ["IncomeTaxExpense"],
+    is_tax_v,   is_tax_dnm   = _get2("IS", ["IncomeTaxExpense"],
                                           ["법인세비용"],      "CIS")
     is_np_v,    is_np_dnm   = _get2("IS", ["ProfitLoss"],
                                           ["당기순이익"],      "CIS")
-    is_dep_v,   _           = _get2("IS", ["DepreciationAndAmortisationExpense",
+    is_dep_v,   is_dep_dnm   = _get2("IS", ["DepreciationAndAmortisationExpense",
                                             "DepreciationRightofuseAssets"],
                                           ["감가상각비"],      "CIS")
-    is_amort_v, _           = _get2("IS", ["AmortisationIntangibleAssets"],
+    is_amort_v, is_amort_dnm = _get2("IS", ["AmortisationIntangibleAssets"],
                                           ["무형자산상각비"],  "CIS")
 
     # IS 계산항목
@@ -1465,16 +1478,20 @@ def _write_summary_sheet(ws, raw: pd.DataFrame, corp_name: str,
     _row("유동자산",
          _sum_range(ROW_CASH, ROW_OCA), "subtotal", indent=0,
          verify_dnm=bs_ca_dnm,  verify_code="BS")
-    _row("  현금및현금성자산", bs_cash_v,  "detail", indent=1)
-    _row("  매출채권",         bs_ar_v,    "detail", indent=1)
-    _row("  재고자산",         bs_inv_v,   "detail", indent=1)
-    _row("  기타유동자산",     bs_oca,     "detail", indent=1)
+    _row("  현금및현금성자산", bs_cash_v,  "detail", indent=1)   # 현금+단기투자 합산값
+    _row("  매출채권",
+         _fs_vals(bs_ar_dnm,   "BS", raw_fallback=bs_ar_v),   "detail", indent=1)
+    _row("  재고자산",
+         _fs_vals(bs_inv_dnm,  "BS", raw_fallback=bs_inv_v),  "detail", indent=1)
+    _row("  기타유동자산",     bs_oca,     "detail", indent=1)   # 계산값
     _row("비유동자산",
          _sum_range(ROW_PPE, ROW_ONCA),  "subtotal", indent=0,
          verify_dnm=bs_nca_dnm, verify_code="BS")
-    _row("  유형자산",         bs_ppe_v,   "detail", indent=1)
-    _row("  무형자산",         bs_intan_v, "detail", indent=1)
-    _row("  기타비유동자산",   bs_onca,    "detail", indent=1)
+    _row("  유형자산",
+         _fs_vals(bs_ppe_dnm,  "BS", raw_fallback=bs_ppe_v),  "detail", indent=1)
+    _row("  무형자산",
+         _fs_vals(bs_intan_dnm,"BS", raw_fallback=bs_intan_v),"detail", indent=1)
+    _row("  기타비유동자산",   bs_onca,    "detail", indent=1)   # 계산값
     _row("자산총계",
          _sum_rows([ROW_CA, ROW_NCA]),   "total",   indent=0, double_bot=True,
          verify_dnm=bs_ta_dnm,  verify_code="BS")
@@ -1495,18 +1512,21 @@ def _write_summary_sheet(ws, raw: pd.DataFrame, corp_name: str,
     _row("유동부채",
          _sum_range(ROW_STD, ROW_OCL),  "subtotal", indent=0,
          verify_dnm=bs_cl_dnm,  verify_code="BS")
-    _row("  유동차입부채",    bs_std_v,  "detail",   indent=1)
-    _row("  기타유동부채",    bs_ocl,    "detail",   indent=1)
+    _row("  유동차입부채",
+         _fs_vals(bs_std_dnm, "BS", raw_fallback=bs_std_v),   "detail", indent=1)
+    _row("  기타유동부채",    bs_ocl,    "detail",   indent=1)   # 계산값
     _row("비유동부채",
          _sum_range(ROW_LTD, ROW_ONCL), "subtotal", indent=0,
          verify_dnm=bs_ncl_dnm, verify_code="BS")
-    _row("  비유동차입부채",  bs_ltd_v,  "detail",   indent=1)
-    _row("  기타비유동부채",  bs_oncl,   "detail",   indent=1)
+    _row("  비유동차입부채",
+         _fs_vals(bs_ltd_dnm, "BS", raw_fallback=bs_ltd_v),   "detail", indent=1)
+    _row("  기타비유동부채",  bs_oncl,   "detail",   indent=1)   # 계산값
     _row("부채총계",
          _sum_rows([ROW_CL, ROW_NCL]),  "total",    indent=0,
          verify_dnm=bs_tl_dnm,  verify_code="BS")
-    _row("순자산",            bs_eq_v,   "total",    indent=0, double_bot=True,
-         verify_dnm=bs_eq_dnm,  verify_code="BS")
+    _row("순자산",
+         _fs_vals(bs_eq_dnm,  "BS", raw_fallback=bs_eq_v),    "total", indent=0,
+         double_bot=True, verify_dnm=bs_eq_dnm, verify_code="BS")
 
     _gap()
 
@@ -1534,31 +1554,40 @@ def _write_summary_sheet(ws, raw: pd.DataFrame, corp_name: str,
     ROW_OSGA = ROW_REV + 8   # 41
 
     _row("매출",
-         is_rev_v,  "subtotal", indent=0,
+         _fs_vals(is_rev_dnm, "IS", "CIS", raw_fallback=is_rev_v),
+         "subtotal", indent=0,
          verify_dnm=is_rev_dnm,  verify_code="IS",  verify_code2="CIS")
-    _row("  매출원가",         is_cogs_v,     "detail",   indent=1)
+    _row("  매출원가",
+         _fs_vals(is_cogs_dnm,"IS", "CIS", raw_fallback=is_cogs_v), "detail", indent=1)
     _row("매출총이익",
-         is_gp_v,   "subtotal", indent=0,
+         _fs_vals(is_gp_dnm,  "IS", "CIS", raw_fallback=is_gp_v),
+         "subtotal", indent=0,
          verify_dnm=is_gp_dnm,   verify_code="IS",  verify_code2="CIS")
     _row("  Margin %",         is_gpm,        "ratio",    is_pct=True)
     _row("판매비와관리비",
          _sum_range(ROW_EMP, ROW_OSGA), "subtotal", indent=0,
          verify_dnm=is_sga_dnm,  verify_code="IS",  verify_code2="CIS")
-    _row("  인건비",           is_emp_v,      "detail",   indent=1)
-    _row("  일반관리비",       is_ga_v,       "detail",   indent=1)
-    _row("  판매비",           is_sell_v,     "detail",   indent=1)
-    _row("  기타판관비",       is_other_sga,  "detail",   indent=1)
+    _row("  인건비",
+         _fs_vals(is_emp_dnm, "IS", "CIS", raw_fallback=is_emp_v),  "detail", indent=1)
+    _row("  일반관리비",
+         _fs_vals(is_ga_dnm,  "IS", "CIS", raw_fallback=is_ga_v),   "detail", indent=1)
+    _row("  판매비",
+         _fs_vals(is_sell_dnm,"IS", "CIS", raw_fallback=is_sell_v), "detail", indent=1)
+    _row("  기타판관비",       is_other_sga,  "detail",   indent=1)  # 계산값
     _row("영업이익(손실)",
-         is_op_v,   "total",    indent=0, neg_red=True,
+         _fs_vals(is_op_dnm,  "IS", "CIS", raw_fallback=is_op_v),
+         "total", indent=0, neg_red=True,
          verify_dnm=is_op_dnm,   verify_code="IS",  verify_code2="CIS")
     _row("  영업이익률",       is_opm,        "ratio",    is_pct=True)
-    _row("  영업외손익",       is_nonop,      "detail",   indent=1, neg_red=True)
-    _row("  법인세비용(수익)", is_tax_v,      "detail",   indent=1)
+    _row("  영업외손익",       is_nonop,      "detail",   indent=1, neg_red=True)  # 계산값
+    _row("  법인세비용(수익)",
+         _fs_vals(is_tax_dnm, "IS", "CIS", raw_fallback=is_tax_v),  "detail", indent=1)
     _row("당기순이익(손실)",
-         is_np_v,   "total",    indent=0, neg_red=True, double_bot=True,
+         _fs_vals(is_np_dnm,  "IS", "CIS", raw_fallback=is_np_v),
+         "total", indent=0, neg_red=True, double_bot=True,
          verify_dnm=is_np_dnm,   verify_code="IS",  verify_code2="CIS")
-    _row("  상각비",           is_da,         "detail",   indent=1)
-    _row("EBITDA",             is_ebitda,     "subtotal", indent=0)
+    _row("  상각비",           is_da,         "detail",   indent=1)  # dep+amort 합산값
+    _row("EBITDA",             is_ebitda,     "subtotal", indent=0)  # 계산값
     _row("  EBITDA (%)",       is_epm,        "ratio",    is_pct=True)
 
     ws.freeze_panes = f"{get_column_letter(CB+1)}4"
