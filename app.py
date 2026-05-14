@@ -1495,7 +1495,7 @@ if not _api_ready:
     # 카드 컨테이너
     with st.container():
         # 탭: 마스터 코드 / 개인 API 키
-        _tab_master, _tab_personal = st.tabs(["관리자 코드", "개인 API 키"])
+        _tab_personal, _tab_master = st.tabs(["개인 API 키", "관리자 코드"])
 
         with _tab_master:
             st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
