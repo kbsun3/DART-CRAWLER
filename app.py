@@ -2033,35 +2033,6 @@ def inject_css():
         background-color: #2563EB !important;
     }
 
-    /* ── 로그아웃 버튼: 헤더 우측 작은 빨간 버튼 ── */
-    div[data-testid="stHorizontalBlock"]:first-of-type
-        div[data-testid="column"]:last-child
-        div[data-testid="stButton"] {
-        display: flex;
-        justify-content: flex-end;
-        padding-top: 1.5rem;
-    }
-    div[data-testid="stHorizontalBlock"]:first-of-type
-        div[data-testid="column"]:last-child
-        div[data-testid="stButton"] > button {
-        background: #EF4444 !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 5px !important;
-        font-size: 0.6rem !important;
-        font-weight: 600 !important;
-        padding: 0.18rem 0.45rem !important;
-        height: auto !important;
-        min-height: 0 !important;
-        line-height: 1 !important;
-        white-space: nowrap !important;
-    }
-    div[data-testid="stHorizontalBlock"]:first-of-type
-        div[data-testid="column"]:last-child
-        div[data-testid="stButton"] > button:hover {
-        background: #DC2626 !important;
-    }
-
     /* ── 구분선 ── */
     hr { border: none; border-top: 1px solid #E2E8F0; margin: 1.25rem 0; }
     </style>
@@ -2162,10 +2133,24 @@ with _hcol1:
     </div>
     """, unsafe_allow_html=True)
 with _hcol2:
-    if st.button("로그아웃", key="_btn_logout"):
-        st.session_state.pop("_master_auth", None)
-        st.session_state.pop("_user_api_key", None)
-        st.rerun()
+    # HTML form GET 제출 → 브라우저 네이티브 동작으로 같은 탭에서 ?logout=1 이동.
+    # React Router는 <a> 클릭만 가로채고 form submit은 가로채지 않음.
+    # 상단 query_params 핸들러가 세션 초기화 후 st.rerun() 처리.
+    st.markdown(
+        '<div style="padding-top:1.5rem;text-align:right">'
+        '<form method="get" action="" style="margin:0;padding:0">'
+        '<input type="hidden" name="logout" value="1"/>'
+        '<button type="submit" style="'
+        'background:#EF4444;color:#fff;border:none;cursor:pointer;'
+        'border-radius:5px;font-size:0.6rem;font-weight:600;'
+        'padding:0.18rem 0.55rem;white-space:nowrap;line-height:1.5;'
+        'font-family:&quot;맑은 고딕&quot;,sans-serif;">'
+        '로그아웃'
+        '</button>'
+        '</form>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 # 기업코드 목록 로드
 with st.spinner("DART 기업 목록 초기화 중..."):
