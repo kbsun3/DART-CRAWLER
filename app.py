@@ -38,10 +38,10 @@ REPORT_TYPES = {
 }
 
 FS_LABELS = {
-    "BS":  "재무상태표",
-    "IS":  "손익계산서",
-    "CIS": "포괄손익계산서",
-    "CF":  "현금흐름표",
+    "BS":  "BS",
+    "IS":  "IS",
+    "CIS": "CIS",
+    "CF":  "CF",
     # SCE(자본변동표)는 2D 매트릭스 구조로 온전한 재현 불가 → L2 참조
 }
 
@@ -1830,8 +1830,8 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
         except Exception as _cfo_err:
             ws_cfo.cell(row=2, column=2, value=f"[CFO 시트 생성 오류] {_cfo_err}")
 
-        # ── 5Y 요약 시트 ────────────────────────────────────────────────────
-        ws_sum = writer.book.create_sheet("5Y 요약")
+        # ── 재무 요약 시트 ──────────────────────────────────────────────────
+        ws_sum = writer.book.create_sheet("재무 요약")
         try:
             _write_summary_sheet(ws_sum, raw, corp_name, all_year_cols, period_map,
                                  fs_row_maps=fs_row_maps,
@@ -1840,22 +1840,20 @@ def build_excel(corp_code: str, corp_name: str, stock_code: str,
             ws_sum.cell(row=2, column=2, value=f"[요약 시트 생성 오류] {_sum_err}")
 
         # ── 시트 순서 조정 ──────────────────────────────────────────────────
-        # 순서: 정보 | 5Y 요약 | Cash Flow Overview | 원본데이터 | FS 시트들
+        # 목표 순서: 정보 | Cash Flow Overview | 재무 요약 | BS | IS | CIS | CF | 원본데이터
         _wb = writer.book
-        try:
-            _cfo_ws = _wb["Cash Flow Overview"]
-            _wb._sheets.remove(_cfo_ws)
-            _raw_idx = _wb.sheetnames.index("원본데이터")
-            _wb._sheets.insert(_raw_idx + 1, _cfo_ws)
-        except Exception:
-            pass
-
-        try:
-            _sum_ws = _wb["5Y 요약"]
-            _wb._sheets.remove(_sum_ws)
-            _wb._sheets.insert(1, _sum_ws)   # 정보 시트 다음 = index 1
-        except Exception:
-            pass
+        _priority = ["정보", "Cash Flow Overview", "재무 요약",
+                     "BS", "IS", "CIS", "CF", "원본데이터"]
+        _existing_titles = {ws.title for ws in _wb.worksheets}
+        _ordered = [_wb[t] for t in _priority if t in _existing_titles]
+        # 위 목록에 없는 시트(SCE 등)는 CF 뒤, 원본데이터 앞에 삽입
+        _extras = [ws for ws in _wb.worksheets if ws.title not in _priority]
+        _cf_pos = next((i for i, ws in enumerate(_ordered)
+                        if ws.title == "원본데이터"), len(_ordered))
+        for _ws in _extras:
+            _ordered.insert(_cf_pos, _ws)
+            _cf_pos += 1
+        _wb._sheets[:] = _ordered
 
     except Exception as _wb_err:
         # with 블록 자체의 예외 (ExcelWriter 초기화 실패 등)
