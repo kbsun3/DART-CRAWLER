@@ -1570,14 +1570,14 @@ if _dl_bytes:
         "_excel_meta", ("–", "–", "–")
     )
     st.markdown(f"""
-    <div style="display:flex;gap:10px;margin:8px 0;">
-      <span style="background:#EFF6FF;color:#1E3A5F;padding:4px 12px;border-radius:6px;font-size:13px;">
+    <div style="display:flex;gap:12px;margin:10px 0;">
+      <span style="background:#EFF6FF;color:#1E3A5F;padding:8px 20px;border-radius:8px;font-size:15px;font-weight:600;">
         📅 {_yr_range}
       </span>
-      <span style="background:#EFF6FF;color:#1E3A5F;padding:4px 12px;border-radius:6px;font-size:13px;">
+      <span style="background:#EFF6FF;color:#1E3A5F;padding:8px 20px;border-radius:8px;font-size:15px;font-weight:600;">
         {_n_yr}개년
       </span>
-      <span style="background:#EFF6FF;color:#1E3A5F;padding:4px 12px;border-radius:6px;font-size:13px;">
+      <span style="background:#EFF6FF;color:#1E3A5F;padding:8px 20px;border-radius:8px;font-size:15px;font-weight:600;">
         {_rtype}
       </span>
     </div>
