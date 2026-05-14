@@ -1455,6 +1455,24 @@ def inject_css():
         font-size: 0.95rem !important;
     }
 
+    /* ── 로그아웃 버튼 ── */
+    [data-testid="stButton"][key="_logout"] button,
+    button[data-testid="baseButton-secondary"][aria-label="로그아웃"],
+    div[data-testid="column"]:last-child div[data-testid="stButton"] button {
+        background: #EF4444 !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-size: 0.78rem !important;
+        font-weight: 600 !important;
+        padding: 0.4rem 0.6rem !important;
+        white-space: nowrap !important;
+        line-height: 1.2 !important;
+    }
+    div[data-testid="column"]:last-child div[data-testid="stButton"] button:hover {
+        background: #DC2626 !important;
+    }
+
     /* ── input / selectbox ── */
     [data-baseweb="input"] > div,
     [data-baseweb="select"] > div:first-child {
@@ -1544,22 +1562,23 @@ if not _api_ready:
 
 # ── 여기서부터 인증 완료된 사용자만 접근 ─────────────────────────────────────
 
-st.markdown("""
-<div class="app-header">
-  <h1>DARTSHEET</h1>
-  <p>국내 상장사의 재무제표를 DART에서 자동으로 가져와 연도별 엑셀로 정리합니다.</p>
-</div>
-""", unsafe_allow_html=True)
-
-# 우측 상단 로그아웃 버튼
-_logout_col = st.columns([6, 1])[1]
-with _logout_col:
-    if st.button("로그아웃", key="_logout"):
+_hcol1, _hcol2 = st.columns([5, 1])
+with _hcol1:
+    st.markdown("""
+    <div class="app-header">
+      <h1>DARTSHEET</h1>
+      <p>국내 상장사의 재무제표를 DART에서 자동으로 가져와 연도별 엑셀로 정리합니다.</p>
+    </div>
+    """, unsafe_allow_html=True)
+with _hcol2:
+    st.markdown("<div style='padding-top:1.6rem'>", unsafe_allow_html=True)
+    if st.button("로그아웃", key="_logout", use_container_width=True):
         st.session_state.pop("_master_auth", None)
         st.session_state.pop("_user_api_key", None)
         st.session_state.pop("_search_state", None)
         st.session_state.pop("_excel_bytes", None)
         st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # 기업코드 목록 로드
 with st.spinner("DART 기업 목록 초기화 중..."):
