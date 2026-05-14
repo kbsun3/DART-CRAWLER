@@ -1462,9 +1462,9 @@ def inject_css():
         color: white !important;
         border: none !important;
         border-radius: 6px !important;
-        font-size: 0.65rem !important;
+        font-size: 0.58rem !important;
         font-weight: 600 !important;
-        padding: 0.22rem 0.55rem !important;
+        padding: 0.12rem 0.4rem !important;
         white-space: nowrap !important;
         min-height: unset !important;
         height: auto !important;
