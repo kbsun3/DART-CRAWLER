@@ -1463,9 +1463,9 @@ def inject_css():
         color: white !important;
         border: none !important;
         border-radius: 8px !important;
-        font-size: 0.78rem !important;
+        font-size: 0.68rem !important;
         font-weight: 600 !important;
-        padding: 0.4rem 0.6rem !important;
+        padding: 0.25rem 0.5rem !important;
         white-space: nowrap !important;
         line-height: 1.2 !important;
     }
