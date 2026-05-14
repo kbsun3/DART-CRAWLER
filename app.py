@@ -1474,6 +1474,14 @@ def inject_css():
         border-radius: 8px !important;
     }
 
+    /* ── 탭 선택 색상 ── */
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #2563EB !important;
+    }
+    [data-baseweb="tab-highlight"] {
+        background-color: #2563EB !important;
+    }
+
     /* ── 구분선 ── */
     hr { border: none; border-top: 1px solid #E2E8F0; margin: 1.25rem 0; }
     </style>
