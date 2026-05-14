@@ -2033,6 +2033,35 @@ def inject_css():
         background-color: #2563EB !important;
     }
 
+    /* ── 로그아웃 버튼: 헤더 우측 작은 빨간 버튼 ── */
+    div[data-testid="stHorizontalBlock"]:first-of-type
+        div[data-testid="column"]:last-child
+        div[data-testid="stButton"] {
+        display: flex;
+        justify-content: flex-end;
+        padding-top: 1.5rem;
+    }
+    div[data-testid="stHorizontalBlock"]:first-of-type
+        div[data-testid="column"]:last-child
+        div[data-testid="stButton"] > button {
+        background: #EF4444 !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 5px !important;
+        font-size: 0.6rem !important;
+        font-weight: 600 !important;
+        padding: 0.18rem 0.45rem !important;
+        height: auto !important;
+        min-height: 0 !important;
+        line-height: 1 !important;
+        white-space: nowrap !important;
+    }
+    div[data-testid="stHorizontalBlock"]:first-of-type
+        div[data-testid="column"]:last-child
+        div[data-testid="stButton"] > button:hover {
+        background: #DC2626 !important;
+    }
+
     /* ── 구분선 ── */
     hr { border: none; border-top: 1px solid #E2E8F0; margin: 1.25rem 0; }
     </style>
@@ -2133,27 +2162,10 @@ with _hcol1:
     </div>
     """, unsafe_allow_html=True)
 with _hcol2:
-    # Streamlit은 모든 <a> 클릭을 React Router가 가로채 새 탭으로 염.
-    # components.html iframe 안에서 window.parent.location 직접 조작하면
-    # React 라우터를 우회하여 같은 탭 내 이동 가능.
-    import streamlit.components.v1 as _cmp
-    _cmp.html(
-        """<div style="padding-top:1.5rem;text-align:right;
-                       font-family:'맑은 고딕',sans-serif;">
-          <a onclick="window.parent.location.href=
-                        window.parent.location.pathname+'?logout=1';
-                      return false;"
-             href="javascript:void(0)"
-             style="background:#EF4444;color:white;text-decoration:none;
-                    border-radius:5px;font-size:0.6rem;font-weight:600;
-                    padding:0.18rem 0.45rem;white-space:nowrap;
-                    line-height:1;display:inline-block;cursor:pointer;">
-            로그아웃
-          </a>
-        </div>""",
-        height=36,
-        scrolling=False,
-    )
+    if st.button("로그아웃", key="_btn_logout"):
+        st.session_state.pop("_master_auth", None)
+        st.session_state.pop("_user_api_key", None)
+        st.rerun()
 
 # 기업코드 목록 로드
 with st.spinner("DART 기업 목록 초기화 중..."):
