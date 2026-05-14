@@ -1474,8 +1474,11 @@ def inject_css():
         border-radius: 8px !important;
     }
 
-    /* ── 탭 선택 색상 ── */
+    /* ── 탭 색상 (선택·호버) ── */
     button[data-baseweb="tab"][aria-selected="true"] {
+        color: #2563EB !important;
+    }
+    button[data-baseweb="tab"]:hover {
         color: #2563EB !important;
     }
     [data-baseweb="tab-highlight"] {
