@@ -961,7 +961,7 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
     _GT_IN   = Font(name="맑은 고딕",              color="1E3A5F", size=10)
     _GT_SUB  = Font(name="맑은 고딕", italic=True, color="4B5563", size=9)
     _GT_AL     = Alignment(horizontal="left",   vertical="center",
-                           wrap_text=True, indent=1)
+                           wrap_text=False, indent=1)
     _GT_AL_CTR = Alignment(horizontal="center", vertical="center",
                            wrap_text=False)
 
@@ -977,17 +977,17 @@ def _write_cfo_sheet(ws, raw: pd.DataFrame, corp_name: str,
 
     # ① D&A — 입력 행(row 11) 바로 옆
     _gw(R["da"],
-        "① D&A 입력 — 감가상각+상각비 합산 (현금흐름표 영업CF 조정항목 참조)",
+        "① D&A: 감가상각 + 상각비 합산  (현금흐름표 영업CF 조정항목 참조)",
         fill=_GF_IN, font=_GT_IN, height=20)
 
     # ② Maintenance CAPEX — 입력 행(row 26) 바로 옆
     _gw(R["capex_maint"],
-        "② Maintenance CAPEX 입력 — 기존 설비 유지·교체 투자금",
+        "② Maintenance CAPEX: 기존 설비 유지·교체 투자금",
         fill=_GF_IN, font=_GT_IN, height=20)
 
     # ③ Expansion CAPEX — 입력 행(row 27) 바로 옆
     _gw(R["capex_exp"],
-        "③ Expansion CAPEX 입력 — Total CAPEX 에서 ② 를 뺀 금액",
+        "③ Expansion CAPEX: Total CAPEX − ②",
         fill=_GF_IN, font=_GT_IN, height=20)
 
     # 가이드 열 너비 — 내용에 맞게 조정
